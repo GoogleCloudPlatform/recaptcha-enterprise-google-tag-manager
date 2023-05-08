@@ -25,11 +25,23 @@ const dataLayer = {
   get: require('copyFromDataLayer')
 };
 
+const configurations = {
+  v3: {
+    library: 'https://www.google.com/recaptcha/api.js',
+    siteKey: data.v3SiteKey,
+    readyMethod: 'grecaptcha.ready',
+    executeMethod: 'grecaptcha.execute'
+  },
+  enterprise: {
+    library: 'https://www.google.com/recaptcha/enterprise.js',
+    siteKey: data.enterpriseSiteKey,
+    readyMethod: 'grecaptcha.enterprise.ready',
+    executeMethod: 'grecaptcha.enterprise.execute'
+  }
+};
+
+const config = configurations[data.version];
 const trigger = dataLayer.get('event');
-const v3LibraryUrl = 'https://www.google.com/recaptcha/api.js';
-const enterpriseLibraryUrl = 'https://www.google.com/recaptcha/enterprise.js';
-const enterpriseVersion = data.version === 'enterprise';
-const siteKey = enterpriseVersion ? data.enterpriseSiteKey : data.v3SiteKey;
 
 if (trigger === 'gtm.init') {
   injectLibrary(() => {
@@ -65,8 +77,7 @@ if (trigger === 'gtm.init') {
  * @param {FailureCallback} reject
  */
 function injectLibrary(resolve, reject) {
-  const url = enterpriseVersion ? enterpriseLibraryUrl : v3LibraryUrl;
-  injectScript(url + '?render=' + siteKey, resolve, reject);
+  injectScript(config.library + '?render=' + config.siteKey, resolve, reject);
 }
 
 /**
@@ -77,11 +88,10 @@ function injectLibrary(resolve, reject) {
  * @param {FailureCallback} reject
  */
 function getToken(action, resolve, reject) {
-  const baseObject = enterpriseVersion ? 'grecaptcha.enterprise' : 'grecaptcha';
-  const ready = copyFromWindow(baseObject + '.ready');
+  const ready = copyFromWindow(config.readyMethod);
   ready(() => {
-    const execute = copyFromWindow(baseObject + '.execute');
-    execute(siteKey, { action: action })
+    const execute = copyFromWindow(config.executeMethod);
+    execute(config.siteKey, { action: action })
       .then(resolve)
       .catch(reject);
   });

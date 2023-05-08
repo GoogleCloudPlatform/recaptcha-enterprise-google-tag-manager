@@ -94,11 +94,23 @@ const dataLayer = {
   get: require('copyFromDataLayer')
 };
 
+const configurations = {
+  v3: {
+    library: 'https://www.google.com/recaptcha/api.js',
+    siteKey: data.v3SiteKey,
+    readyMethod: 'grecaptcha.ready',
+    executeMethod: 'grecaptcha.execute'
+  },
+  enterprise: {
+    library: 'https://www.google.com/recaptcha/enterprise.js',
+    siteKey: data.enterpriseSiteKey,
+    readyMethod: 'grecaptcha.enterprise.ready',
+    executeMethod: 'grecaptcha.enterprise.execute'
+  }
+};
+
+const config = configurations[data.version];
 const trigger = dataLayer.get('event');
-const v3LibraryUrl = 'https://www.google.com/recaptcha/api.js';
-const enterpriseLibraryUrl = 'https://www.google.com/recaptcha/enterprise.js';
-const enterpriseVersion = data.version === 'enterprise';
-const siteKey = enterpriseVersion ? data.enterpriseSiteKey : data.v3SiteKey;
 
 if (trigger === 'gtm.init') {
   injectLibrary(() => {
@@ -134,8 +146,7 @@ if (trigger === 'gtm.init') {
  * @param {FailureCallback} reject
  */
 function injectLibrary(resolve, reject) {
-  const url = enterpriseVersion ? enterpriseLibraryUrl : v3LibraryUrl;
-  injectScript(url + '?render=' + siteKey, resolve, reject);
+  injectScript(config.library + '?render=' + config.siteKey, resolve, reject);
 }
 
 /**
@@ -146,11 +157,10 @@ function injectLibrary(resolve, reject) {
  * @param {FailureCallback} reject
  */
 function getToken(action, resolve, reject) {
-  const baseObject = enterpriseVersion ? 'grecaptcha.enterprise' : 'grecaptcha';
-  const ready = copyFromWindow(baseObject + '.ready');
+  const ready = copyFromWindow(config.readyMethod);
   ready(() => {
-    const execute = copyFromWindow(baseObject + '.execute');
-    execute(siteKey, { action: action })
+    const execute = copyFromWindow(config.executeMethod);
+    execute(config.siteKey, { action: action })
       .then(resolve)
       .catch(reject);
   });
@@ -504,11 +514,118 @@ ___WEB_PERMISSIONS___
 
 ___TESTS___
 
-scenarios: []
+scenarios:
+- name: Enterprise - Initialization
+  code: |-
+    const mockData = {
+      version: 'enterprise',
+      enterpriseSiteKey: 'enterprise-site-key'
+    };
+
+    mock('copyFromDataLayer', 'gtm.init');
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    assertThat(injectedScript).isEqualTo(
+      'https://www.google.com/recaptcha/enterprise.js?render=enterprise-site-key');
+
+    assertThat(dataLayer).isEqualTo([{
+      event: 'reCAPTCHA Loaded'
+    }]);
+- name: v3 - Initialization
+  code: |-
+    const mockData = {
+      version: 'v3',
+      v3SiteKey: 'v3-site-key'
+    };
+
+    mock('copyFromDataLayer', 'gtm.init');
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    assertThat(injectedScript).isEqualTo(
+      'https://www.google.com/recaptcha/api.js?render=v3-site-key');
+
+    assertThat(dataLayer).isEqualTo([{
+      event: 'reCAPTCHA Loaded'
+    }]);
+- name: Enterprise - Get Token
+  code: |
+    const mockData = {
+      version: 'enterprise',
+      enterpriseSiteKey: 'enterprise-site-key'
+    };
+
+    mock('copyFromDataLayer', 'gtm.submit');
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertThat(siteKey).isEqualTo('enterprise-site-key');
+    assertThat(action).isEqualTo('sha256-action');
+    assertThat(dataLayer).isEqualTo([{
+      recaptcha: '{"token":"recaptcha-token","action":"sha256-action"}'
+    }]);
+- name: v3 - Get Token
+  code: |
+    const mockData = {
+      version: 'v3',
+      v3SiteKey: 'v3-site-key'
+    };
+
+    mock('copyFromDataLayer', 'gtm.submit');
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertThat(siteKey).isEqualTo('v3-site-key');
+    assertThat(action).isEqualTo('sha256-action');
+    assertThat(dataLayer).isEqualTo([{
+      recaptcha: '{"token":"recaptcha-token","action":"sha256-action"}'
+    }]);
+setup: |-
+  let dataLayer = [];
+  mock('createQueue', name => {
+    return item => dataLayer.push(item);
+  });
+
+  let injectedScript;
+  mock('injectScript', (url, resolve, reject) => {
+    injectedScript = url;
+    resolve();
+  });
+
+  mock('sha256', (text, callback) => {
+    callback('sha256-action');
+  });
+
+  let siteKey, action;
+  mock('copyFromWindow', methodName => {
+    if (methodName.match('ready')) {
+      return callback => callback();
+    } else if (methodName.match('execute')) {
+      return (key, options) => {
+        siteKey = key;
+        action = options.action;
+        return {
+          then: callback => {
+            callback('recaptcha-token');
+            return {
+              catch: () => {}
+            };
+          }
+        };
+      };
+    }
+  });
 
 
 ___NOTES___
 
-Created on 5/2/2023, 12:14:13 PM
+Created on 5/8/2023, 3:29:25 PM
 
 

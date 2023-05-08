@@ -166,7 +166,10 @@ const request = {
 
 const response = {
   success: data.gtmOnSuccess,
-  failure: data.gtmOnFailure
+  failure: (error) => {
+    log('Error occurred:', error);
+    data.gtmOnFailure();
+  }
 };
 
 // utility classes/methods.
@@ -177,7 +180,7 @@ const promise = require('Promise').create;
 const deleteProperty = require('Object').delete;
 const encodeUriComponent = require('encodeUriComponent');
 const json = require('JSON');
-const bigQuery = require('BigQuery');
+let bigQueryInsert = require('BigQuery').insert;
 
 // globals
 const siteVerifyUrl = 'https://www.google.com/recaptcha/api/siteverify';
@@ -188,13 +191,12 @@ if (request.isAnalytics()) {
   if (eventData.recaptcha) {
     log('Processing reCAPTCHA...');
     getAssessment(eventData)
-      .then(assessment => outputToBigQuery(eventData, assessment))
-      .then(assessment => attachToEventData(eventData, assessment))
-      .then(response.success)
-      .catch(error => {
-        log('Error occurred:', error);
-        response.failure();
-      });
+      .then(assessment => {
+        processAssessment(eventData, assessment)
+          .then(response.success)
+          .catch(response.failure);
+      })
+      .catch(response.failure);
   }
 } else {
   response.success();
@@ -261,12 +263,12 @@ function getAssessmentFromSiteVerify(eventData, recaptcha) {
         resolve({
           riskAnalysis: {
             score: assessment.score,
-            reasons: assessment['error-codes'],
+            reasons: [],
             extendedVerdictReasons: []
           },
           tokenProperties: {
             valid: assessment.action === recaptcha.action && assessment.success,
-            invalid_reason: '',
+            invalidReason: '',
             createTime: assessment.challenge_ts,
             hostname: assessment.hostname,
             action: assessment.action
@@ -327,6 +329,28 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
 }
 
 /**
+ * Outputs necessary data from the assessment to the configured places.
+ *
+ * @param {Object} eventData Contains all data pulled from the request that came into sGTM.
+ * @param {Object} assessment The reCAPTCHA assessment containing score, token validity, and reasons for score.
+ */
+function processAssessment(eventData, assessment) {
+  return promise((resolve, reject) => {
+    if (data.attachToEventData) {
+      sendToTags(eventData, assessment);
+    }
+
+    if (data.outputToBigQuery) {
+      outputToBigQuery(eventData, assessment)
+        .then(resolve)
+        .catch(reject);
+    } else {
+      resolve();
+    }
+  });
+}
+
+/**
  * Outputs necessary data from the assessment to the BigQuery table specified in the configuration.
  *
  * @param {Object} eventData Contains all data pulled from the request that came into sGTM.
@@ -343,39 +367,42 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
  * @returns {Promise<Object>} The reCAPTCHA assessment containing score, token validity, and reasons for score.
  */
 function outputToBigQuery(eventData, assessment) {
-  if (data.outputToBigQuery) {
-    const connectionInfo = {
-      projectId: data.cloudProjectId,
-      datasetId: data.bigQueryDatasetId,
-      tableId: data.bigQueryTableId
+  const connectionInfo = {
+    projectId: data.cloudProjectId,
+    datasetId: data.bigQueryDatasetId,
+    tableId: data.bigQueryTableId
+  };
+
+  return promise((resolve, reject) => {
+    const row = {
+      timestamp: assessment.tokenProperties.createTime,
+      client_id: eventData.client_id,
+      risk_analysis: {
+        score: assessment.riskAnalysis.score,
+        reasons: assessment.riskAnalysis.reasons,
+        extended_verdict_reasons: assessment.riskAnalysis.extendedVerdictReasons
+      },
+      token_properties: {
+        valid: assessment.tokenProperties.valid,
+        invalid_reason: assessment.tokenProperties.invalidReason
+      }
     };
 
-    return promise((resolve, reject) => {
-      const row = {
-        timestamp: assessment.tokenProperties.createTime,
-        client_id: eventData.client_id,
-        risk_analysis: {
-          score: assessment.riskAnalysis.score,
-          reasons: assessment.riskAnalysis.reasons,
-          extended_verdict_reasons: assessment.riskAnalysis.extendedVerdictReasons
-        },
-        token_properties: {
-          valid: assessment.tokenProperties.valid,
-          invalid_reason: assessment.tokenProperties.invalidReason
-        }
-      };
+    // TODO: when it's possible to mock BigQuery.insert, update tests and remove this
+    // and change bigQueryInsert at top to a constant.
+    if (data.testing) {
+      bigQueryInsert = data.bigQueryInsertMock;
+    }
 
-      bigQuery.insert(connectionInfo, [row])
-        .then(() => resolve(assessment))
-        .catch(reject);
-    });
-  } else {
-    return promise(resolve => resolve(assessment));
-  }
+    bigQueryInsert(connectionInfo, [row])
+      .then(resolve)
+      .catch(reject);
+  });
 }
 
 /**
- * Attaches necessary data from the assessment to the event data and recall the tags with this new event data.
+ * Removes raw reCAPTCHA data, attaches necessary data from the assessment to the event data object,
+ * and runs the container again which calls all the tags with this new event data.
  *
  * @param {Object} eventData Contains all data pulled from the request that came into sGTM.
  * @param {Object} assessment
@@ -384,13 +411,14 @@ function outputToBigQuery(eventData, assessment) {
  * @param {Object} assessment.tokenProperties
  * @param {boolean} assessment.tokenProperties.valid Whether or not the token is considered valid.
  */
-function attachToEventData(eventData, assessment) {
-  if (data.attachToEventData) {
-    deleteProperty(eventData, 'recaptcha');
-    eventData.recaptcha_score = assessment.riskAnalysis.score;
-    eventData.recaptcha_valid = assessment.tokenProperties.valid;
-    sendToTags(eventData);
-  }
+function sendToTags(eventData, assessment) {
+  deleteProperty(eventData, 'recaptcha');
+
+  eventData.recaptcha_score = assessment.riskAnalysis.score;
+  eventData.recaptcha_valid = assessment.tokenProperties.valid;
+
+  log('Sending updated event data to tags...');
+  runContainer(eventData);
 }
 
 /**
@@ -406,24 +434,6 @@ function buildQueryString(data) {
     encoded.push(encodeUriComponent(key) + '=' + encodeUriComponent(value));
   }
   return encoded.join('&');
-}
-
-/**
- * This is called once the function it's provided to has completed
- * (including any async processing that happens).
- *
- * @callback CompletionCallback
- */
-
-/**
- * Sends filtered event data to all tags again by re-running the container.
- *
- * @param {Object} filteredEventData
- * @param {CompletionCallback} callback
- */
-function sendToTags(filteredEventData) {
-  log('Sending updated event data to tags...');
-  runContainer(filteredEventData);
 }
 
 /**
@@ -617,66 +627,134 @@ ___SERVER_PERMISSIONS___
 ___TESTS___
 
 scenarios:
-- name: Enterprise Version - Success - Output to BigQuery Only
-  code: "enterpriseMockData.outputToBigQuery = true;\n\nconst assessment = {\n  event:\
-    \ {\n    expectedAction: 'test-action',\n  },\n  riskAnalysis: {\n    score: 0.7,\n\
-    \    reasons: ['TEST_REASON'],\n    extendedVerdictReasons: ['TEST_EXTENDED_VERDICT_REASON']\n\
-    \  },\n  tokenProperties: {\n    valid: true,\n    action: 'test-action',\n  \
-    \  invalidReason: 'INVALID_REASON_UNSPECIFIED',\n    createTime: '2023-04-28T20:41:30.166Z'\n\
-    \  }\n};\n\nlet httpRequest = {};\nmock('sendHttpRequest', function(url, options,\
-    \ body) {\n  httpRequest.url = url;\n  httpRequest.options = options;\n  httpRequest.body\
-    \ = body;\n  \n  return promise(resolve => resolve({\n    statusCode: 200,\n \
-    \   body: json.stringify(assessment)\n  }));\n});\n\nlet insert = {};\nmock('BigQuery',\
-    \ function() {\n  this.insert = function(connectionInfo, rows) {\n    insert.connectionInfo\
-    \ = connectionInfo;\n    insert.rows = rows;\n    return promise(resolve => resolve());\n\
-    \  };\n});\n\n\n// Call runCode to run the template's code.\nrunCode(enterpriseMockData);\n\
-    \nassertApi('runContainer').wasNotCalled();\n\n// Verify that the tag finished\
-    \ successfully.\nassertApi('gtmOnSuccess').wasCalled();"
-setup: |-
-  const json = require('JSON');
-  const promise = require('Promise').create;
-  const defer = require('callLater');
-
-  const enterpriseMockData = {
-    version: 'enterprise',
-    cloudProjectId: 'test-project-id',
-    apiKey: 'test-api-key',
-    siteKey: 'test-site-key',
-    attachToEventData: false,
-    outputToBigQuery: false,
-    bigQueryDatasetId: 'test-bq-dataset-id',
-    bigQueryTableId: 'test-bq-table-id',
-    loggingEnabled: true
-  };
-
-  const v3MockData = {
-    version: 'v3',
-    secretKey: 'test-secret-key',
-    attachToEventData: false,
-    outputToBigQuery: false,
-    bigQueryDatasetId: 'test-bq-dataset-id',
-    bigQueryTableId: 'test-bq-table-id',
-    loggingEnabled: true
-  };
-
-  let eventData;
-  mock('runContainer', function(rcEventData, callback) {
-    eventData = rcEventData;
-    callback();
-  });
-
-  mock('getAllEventData', {
-    client_id: 'test-client-id',
-    ip_override: 'test-ip-address',
-    user_agent: 'test-user-agent',
-    recaptcha: '{"token": "test-token","action": "test-action"}'
-  });
-
-  mock('isRequestMpv2', true);
+- name: Enterprise - Success - Output to BigQuery Only
+  code: "enterpriseMockData.outputToBigQuery = true;\nconst assessment = enterpriseAssessment;\n\
+    \nlet params = {};\n// replace with actual mock when it's possible to mock BigQuery.insert.\n\
+    enterpriseMockData.bigQueryInsertMock = (connectionInfo, rows) => {\n  params.connectionInfo\
+    \ = connectionInfo;\n  params.rows = rows;\n  \n  return promise(resolve => resolve());\n\
+    };\n\n// run the template code.\nrunCode(enterpriseMockData);\n\n// assertions\
+    \ need to deferred due to async behaviors (promises).\ndefer(() => {\n  assertThat(params.connectionInfo).isEqualTo({\n\
+    \    projectId: enterpriseMockData.cloudProjectId,\n    datasetId: enterpriseMockData.bigQueryDatasetId,\n\
+    \    tableId: enterpriseMockData.bigQueryTableId\n  });\n  \n  assertThat(params.rows).isEqualTo([{\n\
+    \    timestamp: assessment.tokenProperties.createTime,\n    client_id: 'test-client-id',\n\
+    \    risk_analysis: {\n      score: assessment.riskAnalysis.score,\n      reasons:\
+    \ assessment.riskAnalysis.reasons,\n      extended_verdict_reasons: assessment.riskAnalysis.extendedVerdictReasons\n\
+    \    },\n    token_properties: {\n      valid: assessment.tokenProperties.valid,\n\
+    \      invalid_reason: assessment.tokenProperties.invalidReason\n    }\n  }]);\n\
+    \  \n  assertApi('runContainer').wasNotCalled();\n  assertApi('gtmOnSuccess').wasCalled();\n\
+    });"
+- name: v3 - Success - Output to BigQuery Only
+  code: "v3MockData.outputToBigQuery = true;\nconst assessment = v3Assessment;\n\n\
+    let params = {};\n// replace with actual mock when it's possible to mock BigQuery.insert.\n\
+    v3MockData.bigQueryInsertMock = (connectionInfo, rows) => {\n  params.connectionInfo\
+    \ = connectionInfo;\n  params.rows = rows;\n  \n  return promise(resolve => resolve());\n\
+    };\n\n// run the template code.\nrunCode(v3MockData);\n\n// assertions need to\
+    \ deferred due to async behaviors (promises).\ndefer(() => {\n  assertThat(params.connectionInfo).isEqualTo({\n\
+    \    projectId: v3MockData.cloudProjectId,\n    datasetId: v3MockData.bigQueryDatasetId,\n\
+    \    tableId: v3MockData.bigQueryTableId\n  });\n  \n  assertThat(params.rows).isEqualTo([{\n\
+    \    timestamp: assessment.challenge_ts,\n    client_id: 'test-client-id',\n \
+    \   risk_analysis: {\n      score: assessment.score,\n      reasons: [],\n   \
+    \   extended_verdict_reasons: []\n    },\n    token_properties: {\n      valid:\
+    \ assessment.success,\n      invalid_reason: ''\n    }\n  }]);\n  \n  assertApi('runContainer').wasNotCalled();\n\
+    \  assertApi('gtmOnSuccess').wasCalled();\n});"
+- name: Enterprise - Failure - Output to BigQuery Only
+  code: "enterpriseMockData.outputToBigQuery = true;\nconst assessment = enterpriseAssessment;\n\
+    \n// replace with actual mock when it's possible to mock BigQuery.insert.\nenterpriseMockData.bigQueryInsertMock\
+    \ = (connectionInfo, rows) => {  \n  return promise((resolve, reject) => reject('Some\
+    \ error message.'));\n};\n\n// run the template code.\nrunCode(enterpriseMockData);\n\
+    \n// assertions need to deferred due to async behaviors (promises).\ndefer(()\
+    \ => {  \n  assertApi('logToConsole').wasCalled();\n  assertApi('runContainer').wasNotCalled();\n\
+    \  assertApi('gtmOnSuccess').wasNotCalled();\n  assertApi('gtmOnFailure').wasCalled();\n\
+    });"
+- name: v3 - Failure - Output to BigQuery Only
+  code: "v3MockData.outputToBigQuery = true;\nconst assessment = v3Assessment;\n\n\
+    // replace with actual mock when it's possible to mock BigQuery.insert.\nenterpriseMockData.bigQueryInsertMock\
+    \ = (connectionInfo, rows) => {  \n  return promise((resolve, reject) => reject('Some\
+    \ error message.'));\n};\n\n// run the template code.\nrunCode(enterpriseMockData);\n\
+    \n// assertions need to deferred due to async behaviors (promises).\ndefer(()\
+    \ => {  \n  assertApi('logToConsole').wasCalled();\n  assertApi('runContainer').wasNotCalled();\n\
+    \  assertApi('gtmOnSuccess').wasNotCalled();\n  assertApi('gtmOnFailure').wasCalled();\n\
+    });"
+- name: Enterprise - Success - Attach to Event Data Only
+  code: "enterpriseMockData.attachToEventData = true;\nconst assessment = enterpriseAssessment;\n\
+    \n// run the template code.\nrunCode(enterpriseMockData);\n\n// assertions need\
+    \ to deferred due to async behaviors (promises).\ndefer(() => {  \n  assertThat(eventData).isEqualTo({\n\
+    \    client_id: 'test-client-id',\n    ip_override: 'test-ip-address',\n    user_agent:\
+    \ 'test-user-agent',\n    recaptcha_score: 0.7,\n    recaptcha_valid: true\n \
+    \ });\n  \n  assertApi('runContainer').wasCalled();\n  assertApi('gtmOnSuccess').wasCalled();\n\
+    });"
+- name: v3 - Success - Attach to Event Data Only
+  code: "v3MockData.attachToEventData = true;\nconst assessment = v3Assessment;\n\n\
+    // run the template code.\nrunCode(v3MockData);\n\n// assertions need to deferred\
+    \ due to async behaviors (promises).\ndefer(() => {  \n  assertThat(eventData).isEqualTo({\n\
+    \    client_id: 'test-client-id',\n    ip_override: 'test-ip-address',\n    user_agent:\
+    \ 'test-user-agent',\n    recaptcha_score: 0.8,\n    recaptcha_valid: true\n \
+    \ });\n  \n  assertApi('runContainer').wasCalled();\n  assertApi('gtmOnSuccess').wasCalled();\n\
+    });"
+- name: Enterprise - Success - Attach to Event Data and Output to BigQuery
+  code: "enterpriseMockData.attachToEventData = true;\nenterpriseMockData.outputToBigQuery\
+    \ = true;\nconst assessment = enterpriseAssessment;\n\nlet params = {};\n// replace\
+    \ with actual mock when it's possible to mock BigQuery.insert.\nenterpriseMockData.bigQueryInsertMock\
+    \ = (connectionInfo, rows) => {\n  params.connectionInfo = connectionInfo;\n \
+    \ params.rows = rows;\n  \n  return promise(resolve => resolve());\n};\n\n// run\
+    \ the template code.\nrunCode(enterpriseMockData);\n\n// assertions need to deferred\
+    \ due to async behaviors (promises).\ndefer(() => {\n  assertThat(params.connectionInfo).isEqualTo({\n\
+    \    projectId: enterpriseMockData.cloudProjectId,\n    datasetId: enterpriseMockData.bigQueryDatasetId,\n\
+    \    tableId: enterpriseMockData.bigQueryTableId\n  });\n  \n  assertThat(params.rows).isEqualTo([{\n\
+    \    timestamp: assessment.tokenProperties.createTime,\n    client_id: 'test-client-id',\n\
+    \    risk_analysis: {\n      score: assessment.riskAnalysis.score,\n      reasons:\
+    \ assessment.riskAnalysis.reasons,\n      extended_verdict_reasons: assessment.riskAnalysis.extendedVerdictReasons\n\
+    \    },\n    token_properties: {\n      valid: assessment.tokenProperties.valid,\n\
+    \      invalid_reason: assessment.tokenProperties.invalidReason\n    }\n  }]);\n\
+    \  \n  assertThat(eventData).isEqualTo({\n    client_id: 'test-client-id',\n \
+    \   ip_override: 'test-ip-address',\n    user_agent: 'test-user-agent',\n    recaptcha_score:\
+    \ 0.7,\n    recaptcha_valid: true\n  });\n  \n  assertApi('runContainer').wasCalled();\n\
+    \  assertApi('gtmOnSuccess').wasCalled();\n});"
+- name: v3 - Success - Attach to Event Data and Output to BigQuery
+  code: "v3MockData.attachToEventData = true;\nv3MockData.outputToBigQuery = true;\n\
+    const assessment = v3Assessment;\n\nlet params = {};\n// replace with actual mock\
+    \ when it's possible to mock BigQuery.insert.\nv3MockData.bigQueryInsertMock =\
+    \ (connectionInfo, rows) => {\n  params.connectionInfo = connectionInfo;\n  params.rows\
+    \ = rows;\n  \n  return promise(resolve => resolve());\n};\n\n// run the template\
+    \ code.\nrunCode(v3MockData);\n\n// assertions need to deferred due to async behaviors\
+    \ (promises).\ndefer(() => {\n  assertThat(params.connectionInfo).isEqualTo({\n\
+    \    projectId: v3MockData.cloudProjectId,\n    datasetId: v3MockData.bigQueryDatasetId,\n\
+    \    tableId: v3MockData.bigQueryTableId\n  });\n  \n  assertThat(params.rows).isEqualTo([{\n\
+    \    timestamp: assessment.challenge_ts,\n    client_id: 'test-client-id',\n \
+    \   risk_analysis: {\n      score: assessment.score,\n      reasons: [],\n   \
+    \   extended_verdict_reasons: []\n    },\n    token_properties: {\n      valid:\
+    \ assessment.success,\n      invalid_reason: ''\n    }\n  }]);\n  \n  assertThat(eventData).isEqualTo({\n\
+    \    client_id: 'test-client-id',\n    ip_override: 'test-ip-address',\n    user_agent:\
+    \ 'test-user-agent',\n    recaptcha_score: 0.8,\n    recaptcha_valid: true\n \
+    \ });\n  \n  assertApi('runContainer').wasCalled();\n  assertApi('gtmOnSuccess').wasCalled();\n\
+    });"
+setup: "const json = require('JSON');\nconst promise = require('Promise').create;\n\
+  const defer = require('callLater');\n\nconst enterpriseMockData = {\n  version:\
+  \ 'enterprise',\n  cloudProjectId: 'test-project-id',\n  apiKey: 'test-api-key',\n\
+  \  siteKey: 'test-site-key',\n  attachToEventData: false,\n  outputToBigQuery: false,\n\
+  \  bigQueryDatasetId: 'test-bq-dataset-id',\n  bigQueryTableId: 'test-bq-table-id',\n\
+  \  loggingEnabled: true,\n  testing: true\n};\n\nconst v3MockData = {\n  version:\
+  \ 'v3',\n  secretKey: 'test-secret-key',\n  attachToEventData: false,\n  outputToBigQuery:\
+  \ false,\n  bigQueryDatasetId: 'test-bq-dataset-id',\n  bigQueryTableId: 'test-bq-table-id',\n\
+  \  loggingEnabled: true,\n  testing: true\n};\n\nlet eventData;\nmock('runContainer',\
+  \ function(rcEventData) {\n  eventData = rcEventData;\n});\n\nmock('getAllEventData',\
+  \ {\n  client_id: 'test-client-id',\n  ip_override: 'test-ip-address',\n  user_agent:\
+  \ 'test-user-agent',\n  recaptcha: '{\"token\": \"test-token\",\"action\": \"test-action\"\
+  }'\n});\n\nmock('isRequestMpv2', true);\n\nconst enterpriseAssessment = {\n  event:\
+  \ {\n    expectedAction: 'test-action',\n  },\n  riskAnalysis: {\n    score: 0.7,\n\
+  \    reasons: ['TEST_REASON'],\n    extendedVerdictReasons: ['TEST_EXTENDED_VERDICT_REASON']\n\
+  \  },\n  tokenProperties: {\n    valid: true,\n    action: 'test-action',\n    invalidReason:\
+  \ 'INVALID_REASON_UNSPECIFIED',\n    createTime: '2023-04-28T20:41:30.166Z'\n  }\n\
+  };\n\nconst v3Assessment = {\n  success: true,      \n  score: 0.8,\n  action: 'test-action',\n\
+  \  challenge_ts: '2023-04-28T20:41:30.166Z',\n  'error-codes': []\n};\n\nlet httpRequest\
+  \ = {};\nmock('sendHttpRequest', function(url, options, body) {\n  httpRequest.url\
+  \ = url;\n  httpRequest.options = options;\n  httpRequest.body = body;\n  \n  return\
+  \ promise(resolve => resolve({\n    statusCode: 200,\n    body: json.stringify(assessment)\n\
+  \  }));\n});"
 
 
 ___NOTES___
 
-Created on 5/2/2023, 12:26:38 PM
+Created on 5/8/2023, 3:46:49 PM
 
 
