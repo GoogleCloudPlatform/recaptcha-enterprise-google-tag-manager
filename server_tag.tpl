@@ -108,6 +108,12 @@ ___TEMPLATE_PARAMETERS___
     "subParams": [
       {
         "type": "TEXT",
+        "name": "bigQueryCloudProjectId",
+        "displayName": "",
+        "simpleValueType": true
+      },
+      {
+        "type": "TEXT",
         "name": "bigQueryDatasetId",
         "displayName": "Dataset ID",
         "simpleValueType": true
@@ -368,7 +374,7 @@ function processAssessment(eventData, assessment) {
  */
 function outputToBigQuery(eventData, assessment) {
   const connectionInfo = {
-    projectId: data.cloudProjectId,
+    projectId: data.bigQueryCloudProjectId,
     datasetId: data.bigQueryDatasetId,
     tableId: data.bigQueryTableId
   };
@@ -755,6 +761,6 @@ setup: "const json = require('JSON');\nconst promise = require('Promise').create
 
 ___NOTES___
 
-Created on 5/8/2023, 3:46:49 PM
+Created on 5/8/2023, 6:26:16 PM
 
 

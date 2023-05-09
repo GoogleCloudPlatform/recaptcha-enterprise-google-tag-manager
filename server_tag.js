@@ -228,7 +228,7 @@ function processAssessment(eventData, assessment) {
  */
 function outputToBigQuery(eventData, assessment) {
   const connectionInfo = {
-    projectId: data.cloudProjectId,
+    projectId: data.bigQueryCloudProjectId,
     datasetId: data.bigQueryDatasetId,
     tableId: data.bigQueryTableId
   };

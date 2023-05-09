@@ -1,0 +1,52 @@
+[
+  {
+    "mode": "NULLABLE",
+    "name": "timestamp",
+    "type": "TIMESTAMP"
+  },
+  {
+    "maxLength": "255",
+    "mode": "NULLABLE",
+    "name": "client_id",
+    "type": "STRING"
+  },
+  {
+    "fields": [
+      {
+        "mode": "NULLABLE",
+        "name": "score",
+        "type": "FLOAT"
+      },
+      {
+        "mode": "REPEATED",
+        "name": "reasons",
+        "type": "STRING"
+      },
+      {
+        "mode": "REPEATED",
+        "name": "extended_verdict_reasons",
+        "type": "STRING"
+      }
+    ],
+    "mode": "NULLABLE",
+    "name": "risk_analysis",
+    "type": "RECORD"
+  },
+  {
+    "fields": [
+      {
+        "mode": "NULLABLE",
+        "name": "valid",
+        "type": "BOOLEAN"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "invalid_reason",
+        "type": "STRING"
+      }
+    ],
+    "mode": "NULLABLE",
+    "name": "token_properties",
+    "type": "RECORD"
+  }
+]
