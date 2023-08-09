@@ -17,8 +17,7 @@
 const injectScript = require('injectScript');
 const copyFromWindow = require('copyFromWindow');
 const createQueue = require('createQueue');
-const sha256 = require('sha256');
-const pagePath = require('getUrl')('path');
+const callLater = require('callLater');
 const json = require('JSON');
 const dataLayer = {
   push: createQueue('dataLayer'),
@@ -41,20 +40,19 @@ const configurations = {
 };
 
 const config = configurations[data.version];
-const trigger = dataLayer.get('event');
+const eventName = dataLayer.get('event');
+const trigger = dataLayer.get('gtm.triggers');
+const maxLibraryLoadWaitCycles = 50;
 
-if (trigger === 'gtm.init') {
+if (eventName === 'gtm.init') {
   injectLibrary(() => {
-    sendLoadedEvent();
+    dataLayer.push({recaptcha: 'loaded'});
     data.gtmOnSuccess();
   }, data.gtmOnFailure);
 } else {
-  buildAction(action => {
-    getToken(action, token => {
-     saveToDataLayer(token, action);
-     data.gtmOnSuccess();
-    }, data.gtmOnFailure);
-  });
+  waitLibraryLoaded(() => {
+    injectToken(data.gtmOnSuccess, data.gtmOnFailure);
+  }, data.gtmOnFailure);
 }
 
 /**
@@ -68,6 +66,53 @@ if (trigger === 'gtm.init') {
  *
  * @callback FailureCallback
  */
+
+/**
+ * Waits for (if necessary) the library to be loaded so a request isn't made prematurely.
+ *
+ * @param {SuccessCallback} resolve
+ * @param {FailureCallback} reject
+ * @param {int} waitCycles Used internally by the method for recursion.
+ */
+function waitLibraryLoaded(resolve, reject, waitCycles) {
+  const recaptchaLoaded = dataLayer.get('recaptcha') ? true : false;
+
+  // default to 0 if not provided.
+  waitCycles = waitCycles || 0;
+
+  if (recaptchaLoaded) {
+    resolve();
+    return;
+  }
+
+  // check again on the next iteration of the event loop up to a max.
+  if (waitCycles < maxLibraryLoadWaitCycles) {
+    callLater(() => {
+      waitLibraryLoaded(resolve, reject, ++waitCycles);
+    });
+  } else {
+    reject();
+  }
+}
+
+/**
+ * Builds a token action, gets the token by calling execute on the appropriate library object
+ * and attaches it to the data layer under "recaptcha" as a JSON object.
+ *
+ * @param {SuccessCallback} resolve
+ * @param {FailureCallback} reject
+ */
+function injectToken(resolve, reject) {
+  const action = getAction();
+  if (action) {
+    getToken(action, token => {
+     saveToDataLayer(token, action);
+     resolve();
+    }, reject);
+  } else {
+    reject();
+  }
+}
 
 /**
  * Inject the appropriate reCAPTCHA library (v3/enterprise) into the page that's
@@ -98,16 +143,6 @@ function getToken(action, resolve, reject) {
 }
 
 /**
- * Adds the reCAPTCHA Loaded event to the data layer. This is used to trigger a page load
- * event if necessary (as the library has to be loaded before you can generate a token).
- */
-function sendLoadedEvent() {
-  dataLayer.push({
-    event: 'reCAPTCHA Loaded'
-  });
-}
-
-/**
  * Adds the reCAPTCHA token (encrypted data) and the action to the data layer. This is what
  * should be attached to any event for which this tag has been added as a setup tag.
  *
@@ -118,22 +153,25 @@ function saveToDataLayer(token, action) {
   dataLayer.push({
     recaptcha: json.stringify({
       token: token,
-      action: action
+      action: action,
+      siteKey: config.siteKey
     })
   });
 }
 
 /**
- * Generates a unique hash that includes page path and event trigger. This hash is used on the
- * backend to ensure the request is a valid one and no tampering is happening in an attempt to
- * fake a request by using a valid token from another page/event.
+ * Get the appropriate action based on the trigger that caused this tag to fire
+ * using the actions mapping provided in the configuration of the tag.
  *
- * @param {SuccessCallback} resolve
+ * @returns {string|null} The name of the action or null if not found.
  */
-function buildAction(resolve) {
-  sha256(pagePath + trigger, actionId => {
-    // actions cannot have = or + characters and SHA256 hashes
-    // can contain these so they need to be removed.
-    resolve(actionId.replace('=', '').replace('+', ''));
-  });
+function getAction() {
+  for (const action of data.actions) {
+    const actionTriggerSuffix = '_' + action.trigger;
+    if (trigger.indexOf(actionTriggerSuffix) !== -1) {
+      return action.name;
+    }
+  }
+
+  return null;
 }

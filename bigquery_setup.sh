@@ -34,15 +34,19 @@ bq mk -t --time_partitioning_type=DAY \
 	$project_id:$dataset_id.$table_id
 
 echo "Adding necessary permissions..."
-bq add-iam-policy-binding \
-  --member=user:$service_account \
-  --role=roles/bigquery.dataViewer \
-  $project_id:$dataset_id
+bq show --format=json $project_id:$dataset_id > bq_dataset_permissions.json
+echo "{\"role\": \"READER\", \"userByEmail\": \"$service_account\"}" > bq_sa_view_permission.json
+jq '.access += [input]' bq_dataset_permissions.json bq_sa_view_permission.json > bq_dataset_updated_permissions.json
+bq update --source bq_dataset_updated_permissions.json $project_id:$dataset_id
 
 bq add-iam-policy-binding \
-  --member=user:$service_account \
+  --member=serviceAccount:$service_account \
   --role=roles/bigquery.dataEditor \
   $project_id:$dataset_id.$table_id
+
+rm bq_dataset_permissions.json
+rm bq_sa_view_permission.json
+rm bq_dataset_updated_permissions.json
 
 echo "-------- Complete ---------------------------
 Use the following when configuring the server container tag in Google Tag Manager (GTM):

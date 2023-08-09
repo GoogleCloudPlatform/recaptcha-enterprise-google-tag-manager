@@ -160,7 +160,7 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
     const body = json.stringify({
       event: {
         token: recaptcha.token,
-        siteKey: data.siteKey,
+        siteKey: recaptcha.siteKey,
         expectedAction: recaptcha.action,
         userIpAddress: eventData.ip_override,
         userAgent: eventData.user_agent
@@ -179,6 +179,9 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
         const assessment = json.parse(response.body);
         const actionMatches = assessment.tokenProperties.action === assessment.event.expectedAction;
         assessment.tokenProperties.valid = actionMatches && assessment.tokenProperties.valid;
+        if (assessment.tokenProperties.createTime === '1970-01-01T00:00:00Z') {
+          assessment.tokenProperties.createTime = null;
+        }
         resolve(assessment);
       } else {
         reject(response.body);
@@ -235,7 +238,6 @@ function outputToBigQuery(eventData, assessment) {
 
   return promise((resolve, reject) => {
     const row = {
-      timestamp: assessment.tokenProperties.createTime,
       client_id: eventData.client_id,
       risk_analysis: {
         score: assessment.riskAnalysis.score,
@@ -247,6 +249,12 @@ function outputToBigQuery(eventData, assessment) {
         invalid_reason: assessment.tokenProperties.invalidReason
       }
     };
+
+    // only attach timestamp if the token create time is available and otherwise
+    // let the table defaults set the current time.
+    if (assessment.tokenProperties.createTime) {
+      row.timestamp = assessment.tokenProperties.createTime;
+    }
 
     // TODO: when it's possible to mock BigQuery.insert, update tests and remove this
     // and change bigQueryInsert at top to a constant.

@@ -76,19 +76,6 @@ ___TEMPLATE_PARAMETERS___
     ]
   },
   {
-    "type": "TEXT",
-    "name": "siteKey",
-    "displayName": "Enterprise Key ID",
-    "simpleValueType": true,
-    "enablingConditions": [
-      {
-        "paramName": "version",
-        "paramValue": "enterprise",
-        "type": "EQUALS"
-      }
-    ]
-  },
-  {
     "type": "CHECKBOX",
     "name": "attachToEventData",
     "checkboxText": "Attach Score to Event Data",
@@ -109,7 +96,7 @@ ___TEMPLATE_PARAMETERS___
       {
         "type": "TEXT",
         "name": "bigQueryCloudProjectId",
-        "displayName": "",
+        "displayName": "Cloud Project ID",
         "simpleValueType": true
       },
       {
@@ -306,7 +293,7 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
     const body = json.stringify({
       event: {
         token: recaptcha.token,
-        siteKey: data.siteKey,
+        siteKey: recaptcha.siteKey,
         expectedAction: recaptcha.action,
         userIpAddress: eventData.ip_override,
         userAgent: eventData.user_agent
@@ -325,6 +312,9 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
         const assessment = json.parse(response.body);
         const actionMatches = assessment.tokenProperties.action === assessment.event.expectedAction;
         assessment.tokenProperties.valid = actionMatches && assessment.tokenProperties.valid;
+        if (assessment.tokenProperties.createTime === '1970-01-01T00:00:00Z') {
+          assessment.tokenProperties.createTime = null;
+        }
         resolve(assessment);
       } else {
         reject(response.body);
@@ -381,7 +371,6 @@ function outputToBigQuery(eventData, assessment) {
 
   return promise((resolve, reject) => {
     const row = {
-      timestamp: assessment.tokenProperties.createTime,
       client_id: eventData.client_id,
       risk_analysis: {
         score: assessment.riskAnalysis.score,
@@ -393,6 +382,12 @@ function outputToBigQuery(eventData, assessment) {
         invalid_reason: assessment.tokenProperties.invalidReason
       }
     };
+
+    // only attach timestamp if the token create time is available and otherwise
+    // let the table defaults set the current time.
+    if (assessment.tokenProperties.createTime) {
+      row.timestamp = assessment.tokenProperties.createTime;
+    }
 
     // TODO: when it's possible to mock BigQuery.insert, update tests and remove this
     // and change bigQueryInsert at top to a constant.
@@ -601,7 +596,7 @@ ___SERVER_PERMISSIONS___
                 "mapValue": [
                   {
                     "type": 1,
-                    "string": "dev-playground-365120"
+                    "string": "*"
                   },
                   {
                     "type": 1,
@@ -737,30 +732,32 @@ scenarios:
 setup: "const json = require('JSON');\nconst promise = require('Promise').create;\n\
   const defer = require('callLater');\n\nconst enterpriseMockData = {\n  version:\
   \ 'enterprise',\n  cloudProjectId: 'test-project-id',\n  apiKey: 'test-api-key',\n\
-  \  siteKey: 'test-site-key',\n  attachToEventData: false,\n  outputToBigQuery: false,\n\
-  \  bigQueryDatasetId: 'test-bq-dataset-id',\n  bigQueryTableId: 'test-bq-table-id',\n\
-  \  loggingEnabled: true,\n  testing: true\n};\n\nconst v3MockData = {\n  version:\
-  \ 'v3',\n  secretKey: 'test-secret-key',\n  attachToEventData: false,\n  outputToBigQuery:\
-  \ false,\n  bigQueryDatasetId: 'test-bq-dataset-id',\n  bigQueryTableId: 'test-bq-table-id',\n\
-  \  loggingEnabled: true,\n  testing: true\n};\n\nlet eventData;\nmock('runContainer',\
-  \ function(rcEventData) {\n  eventData = rcEventData;\n});\n\nmock('getAllEventData',\
-  \ {\n  client_id: 'test-client-id',\n  ip_override: 'test-ip-address',\n  user_agent:\
-  \ 'test-user-agent',\n  recaptcha: '{\"token\": \"test-token\",\"action\": \"test-action\"\
-  }'\n});\n\nmock('isRequestMpv2', true);\n\nconst enterpriseAssessment = {\n  event:\
-  \ {\n    expectedAction: 'test-action',\n  },\n  riskAnalysis: {\n    score: 0.7,\n\
-  \    reasons: ['TEST_REASON'],\n    extendedVerdictReasons: ['TEST_EXTENDED_VERDICT_REASON']\n\
-  \  },\n  tokenProperties: {\n    valid: true,\n    action: 'test-action',\n    invalidReason:\
-  \ 'INVALID_REASON_UNSPECIFIED',\n    createTime: '2023-04-28T20:41:30.166Z'\n  }\n\
-  };\n\nconst v3Assessment = {\n  success: true,      \n  score: 0.8,\n  action: 'test-action',\n\
-  \  challenge_ts: '2023-04-28T20:41:30.166Z',\n  'error-codes': []\n};\n\nlet httpRequest\
-  \ = {};\nmock('sendHttpRequest', function(url, options, body) {\n  httpRequest.url\
-  \ = url;\n  httpRequest.options = options;\n  httpRequest.body = body;\n  \n  return\
-  \ promise(resolve => resolve({\n    statusCode: 200,\n    body: json.stringify(assessment)\n\
-  \  }));\n});"
+  \  attachToEventData: false,\n  outputToBigQuery: false,\n  bigQueryCloudProjectId:\
+  \ 'test-project-id',\n  bigQueryDatasetId: 'test-bq-dataset-id',\n  bigQueryTableId:\
+  \ 'test-bq-table-id',\n  loggingEnabled: true,\n  testing: true\n};\n\nconst v3MockData\
+  \ = {\n  version: 'v3',\n  cloudProjectId: 'test-project-id',\n  secretKey: 'test-secret-key',\n\
+  \  attachToEventData: false,\n  outputToBigQuery: false,\n  bigQueryCloudProjectId:\
+  \ 'test-project-id',\n  bigQueryDatasetId: 'test-bq-dataset-id',\n  bigQueryTableId:\
+  \ 'test-bq-table-id',\n  loggingEnabled: true,\n  testing: true\n};\n\nlet eventData;\n\
+  mock('runContainer', function(rcEventData) {\n  eventData = rcEventData;\n});\n\n\
+  mock('getAllEventData', {\n  client_id: 'test-client-id',\n  ip_override: 'test-ip-address',\n\
+  \  user_agent: 'test-user-agent',\n  recaptcha: '{\"token\":\"test-token\",\"action\"\
+  :\"test-action\",\"siteKey\":\"test-site-key\"}'\n});\n\nmock('isRequestMpv2', true);\n\
+  \nconst enterpriseAssessment = {\n  event: {\n    expectedAction: 'test-action',\n\
+  \  },\n  riskAnalysis: {\n    score: 0.7,\n    reasons: ['TEST_REASON'],\n    extendedVerdictReasons:\
+  \ ['TEST_EXTENDED_VERDICT_REASON']\n  },\n  tokenProperties: {\n    valid: true,\n\
+  \    action: 'test-action',\n    invalidReason: 'INVALID_REASON_UNSPECIFIED',\n\
+  \    createTime: '2023-04-28T20:41:30.166Z'\n  }\n};\n\nconst v3Assessment = {\n\
+  \  success: true,      \n  score: 0.8,\n  action: 'test-action',\n  challenge_ts:\
+  \ '2023-04-28T20:41:30.166Z',\n  'error-codes': []\n};\n\nlet httpRequest = {};\n\
+  mock('sendHttpRequest', function(url, options, body) {\n  httpRequest.url = url;\n\
+  \  httpRequest.options = options;\n  httpRequest.body = body;\n  \n  return promise(resolve\
+  \ => resolve({\n    statusCode: 200,\n    body: json.stringify(assessment)\n  }));\n\
+  });"
 
 
 ___NOTES___
 
-Created on 5/8/2023, 6:26:16 PM
+Created on 8/11/2023, 1:37:21 PM
 
 

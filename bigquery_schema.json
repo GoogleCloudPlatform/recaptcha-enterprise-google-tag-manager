@@ -2,7 +2,8 @@
   {
     "mode": "NULLABLE",
     "name": "timestamp",
-    "type": "TIMESTAMP"
+    "type": "TIMESTAMP",
+    "default_value_expression": "CURRENT_TIMESTAMP()"
   },
   {
     "maxLength": "255",
