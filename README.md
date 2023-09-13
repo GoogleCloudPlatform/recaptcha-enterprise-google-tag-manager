@@ -71,6 +71,15 @@ This set of tag templates both run the reCAPTCHA library to generate a reCAPTCHA
         * Can be used as a visual indicator if pulled into a CRM and associated with the form data.
         * **Important:** Using BigQuery requires some upfront configuration (see above **BigQuery Setup** for details).
     * Or both.
+9. Create and attach **Trigger** that fires when the **recaptcha** event parameter exists.
+    * Click in the **Triggering** box, click on the plus (**+**) and within the **Choose a Trigger** window select the plus (**+**) in the top right corner.
+    * Click within the **Trigger Configuration** box and select **Custom**.
+    * Under **This trigger fires on** select **Some Events**.
+    * In the left dropdown select **New Variable...**, click on the **Variable Configuration** box and select **Event Data** under **Utilities**, in the **Key Path** field type **recaptcha**, name the variable (top left - defaults to "Untitled Variable"), and then **Save** the variable (top right).
+    * In the middle dropdown select **starts with**.
+    * In the right input box type **{** (this tells it to look for a recaptcha event property that looks like a JSON object - starts with an open curly bracket).
+    * Give the trigger a name (top left) and click **Save** (top right).
+10. Save your tag (top right).
 
 ### Web Tag Setup
 #### Import the Web Google Tag Manager Tag Template
@@ -93,7 +102,7 @@ This set of tag templates both run the reCAPTCHA library to generate a reCAPTCHA
 8. Setup **Triggers** for all points during the user experience where you want the reCAPTCHA Tag to make an execute request to reCAPTCHA **except for the form submission or other event you want to actually score**.
     * Adding these strategically helps reCAPTCHA better identify bad actors.
     * To setup a **Trigger** click in the **Triggering** box, click on the plus (**+**) and within the **Choose a Trigger** window select the plus (**+**) in the top right corner, then click within the **Trigger Configuration** box and select anything you want to act as the trigger (use a trigger group under other if you want to group multiple actions into a single trigger), configure it, name it, and save.
-9. Once all **Triggers** are setup save the tag configuration (the overlay will close and you'll be left with the list of tags), then right click on each of the **Firing Triggers** (these Trigger Groups that were just created) next to (associated with) your reCAPTCHA tag and **Copy Link Address** for each and paste them into a doc/notepad. The last number in these URLs (i.e. 77 for a URL that looks like this: https://tagmanager.google.com/#/container/accounts/123456789/containers/12345678/workspaces/1234/triggers/77) is the **Trigger** identifier. Use these numbers (77 in this example) to configure your reCAPTCHA Tag **Trigger** to **Action** mapping. The **Action** in this mapping should be descriptive and human readable (a to z and underscores allowed) as this helps with troubleshooting should it be necessary.
+9. Once all **Triggers** are setup save the tag configuration (the overlay will close and you'll be left with the list of tags), then right click on each of the **Firing Triggers** (these Trigger Groups that were just created) next to (associated with) your reCAPTCHA tag and **Copy Link Address** for each and paste them into a doc/notepad. The last number in these URLs (i.e. 77 for a URL that looks like this: https://tagmanager.google.com/#/container/accounts/123456789/containers/12345678/workspaces/1234/triggers/77) is the **Trigger** identifier. Use these numbers (77 in this example) to configure your reCAPTCHA Tag **Trigger** to **Action** mapping. The **Action** in this mapping should be descriptive and human readable (a to z and underscores allowed) as this helps with troubleshooting should it be necessary. Set **Yes** for any action you expressly want the reCAPTCHA data saved to the data layer for (this data will be pulled from the data layer, sent with your event, and parsed to generate a reCAPTCHA score - more details on setting this up can be found in the next section).
 
 #### Add an Event Tag or Edit an Existing One (The Event/Action You Want to Score)
 1. Add a new trigger to this event tag following the same steps as above.
@@ -104,6 +113,6 @@ This set of tag templates both run the reCAPTCHA library to generate a reCAPTCHA
     * Click the **Varaible Configuration** box.
     * Click **Data Layer Variable** under **Page Variables**.
     * In **Data Layer Variable Name** type **recaptcha**.
-    * Give the variable a name (top left) and save (top right).
+    * Give the variable a name (top left) and click **Save** (top right).
 4. Under **Advanced Settings** > **Tag Sequencing** check **Fire a tag before Form Interaction fires** and select your reCAPTCHA Tag as the **Setup Tag**.
 5. Save your tag configuration.

@@ -17,7 +17,6 @@
 const injectScript = require('injectScript');
 const copyFromWindow = require('copyFromWindow');
 const createQueue = require('createQueue');
-const callLater = require('callLater');
 const json = require('JSON');
 const dataLayer = {
   push: createQueue('dataLayer'),
@@ -40,20 +39,29 @@ const configurations = {
 };
 
 const config = configurations[data.version];
-const eventName = dataLayer.get('event');
-const trigger = dataLayer.get('gtm.triggers');
-const maxLibraryLoadWaitCycles = 50;
+const success = data.gtmOnSuccess;
+const failure = data.gtmOnFailure;
 
-if (eventName === 'gtm.init') {
-  injectLibrary(() => {
-    dataLayer.push({recaptcha: 'loaded'});
-    data.gtmOnSuccess();
-  }, data.gtmOnFailure);
-} else {
-  waitLibraryLoaded(() => {
-    injectToken(data.gtmOnSuccess, data.gtmOnFailure);
-  }, data.gtmOnFailure);
-}
+ensureLibraryLoaded(() => {
+  const eventName = dataLayer.get('event');
+  if (eventName === 'gtm.init') {
+    success();
+  } else {
+    const triggers = dataLayer.get('gtm.triggers');
+    const action = getAction(triggers);
+
+    if (action) {
+      generateToken(action.name, token => {
+       if (action.saveToDataLayer) {
+         saveToDataLayer(token, action.name);
+       }
+       success();
+      }, failure);
+    } else {
+      failure();
+    }
+  }
+}, failure);
 
 /**
  * This is called once the function it's provided to has completed successfully.
@@ -68,61 +76,16 @@ if (eventName === 'gtm.init') {
  */
 
 /**
- * Waits for (if necessary) the library to be loaded so a request isn't made prematurely.
- *
- * @param {SuccessCallback} resolve
- * @param {FailureCallback} reject
- * @param {int} waitCycles Used internally by the method for recursion.
- */
-function waitLibraryLoaded(resolve, reject, waitCycles) {
-  const recaptchaLoaded = dataLayer.get('recaptcha') ? true : false;
-
-  // default to 0 if not provided.
-  waitCycles = waitCycles || 0;
-
-  if (recaptchaLoaded) {
-    resolve();
-    return;
-  }
-
-  // check again on the next iteration of the event loop up to a max.
-  if (waitCycles < maxLibraryLoadWaitCycles) {
-    callLater(() => {
-      waitLibraryLoaded(resolve, reject, ++waitCycles);
-    });
-  } else {
-    reject();
-  }
-}
-
-/**
- * Builds a token action, gets the token by calling execute on the appropriate library object
- * and attaches it to the data layer under "recaptcha" as a JSON object.
- *
- * @param {SuccessCallback} resolve
- * @param {FailureCallback} reject
- */
-function injectToken(resolve, reject) {
-  const action = getAction();
-  if (action) {
-    getToken(action, token => {
-     saveToDataLayer(token, action);
-     resolve();
-    }, reject);
-  } else {
-    reject();
-  }
-}
-
-/**
  * Inject the appropriate reCAPTCHA library (v3/enterprise) into the page that's
  * necessary for generating a reCAPTCHA token.
+ * If the library is loading this will wait until the it's completely loaded before resolving.
+ * If the library is already loaded it will resolve immediately.
  *
  * @param {SuccessCallback} resolve
  * @param {FailureCallback} reject
  */
-function injectLibrary(resolve, reject) {
-  injectScript(config.library + '?render=' + config.siteKey, resolve, reject);
+function ensureLibraryLoaded(resolve, reject) {
+  injectScript(config.library + '?render=' + config.siteKey, resolve, reject, 'recaptcha_library');
 }
 
 /**
@@ -132,7 +95,7 @@ function injectLibrary(resolve, reject) {
  * @param {SuccessCallback} resolve
  * @param {FailureCallback} reject
  */
-function getToken(action, resolve, reject) {
+function generateToken(action, resolve, reject) {
   const ready = copyFromWindow(config.readyMethod);
   ready(() => {
     const execute = copyFromWindow(config.executeMethod);
@@ -160,16 +123,18 @@ function saveToDataLayer(token, action) {
 }
 
 /**
- * Get the appropriate action based on the trigger that caused this tag to fire
+ * Get the appropriate action based on the triggers that caused this tag to fire
  * using the actions mapping provided in the configuration of the tag.
  *
- * @returns {string|null} The name of the action or null if not found.
+ * @param {string} triggers
+ *
+ * @returns {object|null} The action or null if not found.
  */
-function getAction() {
+function getAction(triggers) {
   for (const action of data.actions) {
     const actionTriggerSuffix = '_' + action.trigger;
-    if (trigger.indexOf(actionTriggerSuffix) !== -1) {
-      return action.name;
+    if (triggers.search(actionTriggerSuffix + '(,|$)') !== -1) {
+      return action;
     }
   }
 

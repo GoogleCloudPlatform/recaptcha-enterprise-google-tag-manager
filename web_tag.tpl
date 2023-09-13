@@ -78,6 +78,22 @@ ___TEMPLATE_PARAMETERS___
         "displayName": "Action",
         "name": "name",
         "type": "TEXT"
+      },
+      {
+        "defaultValue": false,
+        "displayName": "Save to Data Layer",
+        "name": "saveToDataLayer",
+        "type": "SELECT",
+        "selectItems": [
+          {
+            "value": false,
+            "displayValue": "No"
+          },
+          {
+            "value": true,
+            "displayValue": "Yes"
+          }
+        ]
       }
     ]
   }
@@ -105,7 +121,6 @@ ___SANDBOXED_JS_FOR_WEB_TEMPLATE___
 const injectScript = require('injectScript');
 const copyFromWindow = require('copyFromWindow');
 const createQueue = require('createQueue');
-const callLater = require('callLater');
 const json = require('JSON');
 const dataLayer = {
   push: createQueue('dataLayer'),
@@ -128,20 +143,29 @@ const configurations = {
 };
 
 const config = configurations[data.version];
-const eventName = dataLayer.get('event');
-const trigger = dataLayer.get('gtm.triggers');
-const maxLibraryLoadWaitCycles = 50;
+const success = data.gtmOnSuccess;
+const failure = data.gtmOnFailure;
 
-if (eventName === 'gtm.init') {
-  injectLibrary(() => {
-    dataLayer.push({recaptcha: 'loaded'});
-    data.gtmOnSuccess();
-  }, data.gtmOnFailure);
-} else {
-  waitLibraryLoaded(() => {
-    injectToken(data.gtmOnSuccess, data.gtmOnFailure);
-  }, data.gtmOnFailure);
-}
+ensureLibraryLoaded(() => {
+  const eventName = dataLayer.get('event');
+  if (eventName === 'gtm.init') {
+    success();
+  } else {
+    const triggers = dataLayer.get('gtm.triggers');
+    const action = getAction(triggers);
+
+    if (action) {
+      generateToken(action.name, token => {
+       if (action.saveToDataLayer) {
+         saveToDataLayer(token, action.name);
+       }
+       success();
+      }, failure);
+    } else {
+      failure();
+    }
+  }
+}, failure);
 
 /**
  * This is called once the function it's provided to has completed successfully.
@@ -156,61 +180,16 @@ if (eventName === 'gtm.init') {
  */
 
 /**
- * Waits for (if necessary) the library to be loaded so a request isn't made prematurely.
- *
- * @param {SuccessCallback} resolve
- * @param {FailureCallback} reject
- * @param {int} waitCycles Used internally by the method for recursion.
- */
-function waitLibraryLoaded(resolve, reject, waitCycles) {
-  const recaptchaLoaded = dataLayer.get('recaptcha') ? true : false;
-
-  // default to 0 if not provided.
-  waitCycles = waitCycles || 0;
-
-  if (recaptchaLoaded) {
-    resolve();
-    return;
-  }
-
-  // check again on the next iteration of the event loop up to a max.
-  if (waitCycles < maxLibraryLoadWaitCycles) {
-    callLater(() => {
-      waitLibraryLoaded(resolve, reject, ++waitCycles);
-    });
-  } else {
-    reject();
-  }
-}
-
-/**
- * Builds a token action, gets the token by calling execute on the appropriate library object
- * and attaches it to the data layer under "recaptcha" as a JSON object.
- *
- * @param {SuccessCallback} resolve
- * @param {FailureCallback} reject
- */
-function injectToken(resolve, reject) {
-  const action = getAction();
-  if (action) {
-    getToken(action, token => {
-     saveToDataLayer(token, action);
-     resolve();
-    }, reject);
-  } else {
-    reject();
-  }
-}
-
-/**
  * Inject the appropriate reCAPTCHA library (v3/enterprise) into the page that's
  * necessary for generating a reCAPTCHA token.
+ * If the library is loading this will wait until the it's completely loaded before resolving.
+ * If the library is already loaded it will resolve immediately.
  *
  * @param {SuccessCallback} resolve
  * @param {FailureCallback} reject
  */
-function injectLibrary(resolve, reject) {
-  injectScript(config.library + '?render=' + config.siteKey, resolve, reject);
+function ensureLibraryLoaded(resolve, reject) {
+  injectScript(config.library + '?render=' + config.siteKey, resolve, reject, 'recaptcha_library');
 }
 
 /**
@@ -220,7 +199,7 @@ function injectLibrary(resolve, reject) {
  * @param {SuccessCallback} resolve
  * @param {FailureCallback} reject
  */
-function getToken(action, resolve, reject) {
+function generateToken(action, resolve, reject) {
   const ready = copyFromWindow(config.readyMethod);
   ready(() => {
     const execute = copyFromWindow(config.executeMethod);
@@ -248,16 +227,18 @@ function saveToDataLayer(token, action) {
 }
 
 /**
- * Get the appropriate action based on the trigger that caused this tag to fire
+ * Get the appropriate action based on the triggers that caused this tag to fire
  * using the actions mapping provided in the configuration of the tag.
  *
- * @returns {string|null} The name of the action or null if not found.
+ * @param {string} triggers
+ *
+ * @returns {object|null} The action or null if not found.
  */
-function getAction() {
+function getAction(triggers) {
   for (const action of data.actions) {
     const actionTriggerSuffix = '_' + action.trigger;
-    if (trigger.indexOf(actionTriggerSuffix) !== -1) {
-      return action.name;
+    if (triggers.search(actionTriggerSuffix + '(,|$)') !== -1) {
+      return action;
     }
   }
 
@@ -533,10 +514,6 @@ ___WEB_PERMISSIONS___
               },
               {
                 "type": 1,
-                "string": "recaptcha"
-              },
-              {
-                "type": 1,
                 "string": "gtm.triggers"
               }
             ]
@@ -597,12 +574,12 @@ scenarios:
 
     assertThat(injectedScript).isEqualTo(
       'https://www.google.com/recaptcha/api.js?render=v3-site-key');
-- name: Enterprise - Get Token
-  code: |
+- name: Enterprise - Get Token & Save
+  code: |+
     const mockData = {
       version: 'enterprise',
       enterpriseSiteKey: 'enterprise-site-key',
-      actions: [{trigger: '90', name: 'test-action'}]
+      actions: [{trigger: '90', name: 'test-action', saveToDataLayer: true}]
     };
 
     mock('copyFromDataLayer', key => {
@@ -616,20 +593,96 @@ scenarios:
     // Call runCode to run the template's code.
     runCode(mockData);
 
-    defer(() => {
-      // Verify that the tag finished successfully.
-      assertThat(siteKey).isEqualTo('enterprise-site-key');
-      assertThat(action).isEqualTo('test-action');
-      assertThat(dataLayer).isEqualTo([{
-        recaptcha: '{"token":"recaptcha-token","action":"test-action","siteKey":"enterprise-site-key"}'
-      }]);
+    // Verify that the tag finished successfully.
+    assertThat(siteKey).isEqualTo('enterprise-site-key');
+    assertThat(action).isEqualTo('test-action');
+    assertThat(dataLayer).isEqualTo([{
+      recaptcha: '{"token":"recaptcha-token","action":"test-action","siteKey":"enterprise-site-key"}'
+    }]);
+
+- name: Enterprise - Just Get Token - Single Trigger
+  code: |+
+    const mockData = {
+      version: 'enterprise',
+      enterpriseSiteKey: 'enterprise-site-key',
+      actions: [{trigger: '90', name: 'test-action', saveToDataLayer: false}]
+    };
+
+    mock('copyFromDataLayer', key => {
+      return {
+        'recaptcha': null,
+        'event': 'test-event',
+        'gtm.triggers': '12345678_90'
+      }[key];
     });
-- name: v3 - Get Token
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertThat(siteKey).isEqualTo('enterprise-site-key');
+    assertThat(action).isEqualTo('test-action');
+    assertThat(dataLayer).isEqualTo([]);
+
+- name: Enterprise - Just Get Token - Multi Trigger
+  code: |
+    const mockData = {
+      version: 'enterprise',
+      enterpriseSiteKey: 'enterprise-site-key',
+      actions: [{trigger: '90', name: 'test-action', saveToDataLayer: false}]
+    };
+
+    mock('copyFromDataLayer', key => {
+      return {
+        'recaptcha': null,
+        'event': 'test-event',
+        'gtm.triggers': '12345678_95,12345678_90,12345678_11'
+      }[key];
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify correct action was found.
+    assertThat(action).isEqualTo('test-action');
+
+    action = null;
+
+    mock('copyFromDataLayer', key => {
+      return {
+        'recaptcha': null,
+        'event': 'test-event',
+        'gtm.triggers': '12345678_90,12345678_11'
+      }[key];
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify correct action was found.
+    assertThat(action).isEqualTo('test-action');
+
+    action = null;
+
+    mock('copyFromDataLayer', key => {
+      return {
+        'recaptcha': null,
+        'event': 'test-event',
+        'gtm.triggers': '12345678_95,12345678_90'
+      }[key];
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify correct action was found.
+    assertThat(action).isEqualTo('test-action');
+- name: v3 - Get Token & Save
   code: |
     const mockData = {
       version: 'v3',
       v3SiteKey: 'v3-site-key',
-      actions: [{trigger: '45', name: 'test-action-v3'}]
+      actions: [{trigger: '45', name: 'test-action-v3', saveToDataLayer: true}]
     };
 
     mock('copyFromDataLayer', key => {
@@ -643,17 +696,89 @@ scenarios:
     // Call runCode to run the template's code.
     runCode(mockData);
 
-    defer(() => {
-      // Verify that the tag finished successfully.
-      assertThat(siteKey).isEqualTo('v3-site-key');
-      assertThat(action).isEqualTo('test-action-v3');
-      assertThat(dataLayer).isEqualTo([{
-        recaptcha: '{"token":"recaptcha-token","action":"test-action-v3","siteKey":"v3-site-key"}'
-      }]);
-    });
-setup: |-
-  const defer = require('callLater');
+    // Verify that the tag finished successfully.
+    assertThat(siteKey).isEqualTo('v3-site-key');
+    assertThat(action).isEqualTo('test-action-v3');
+    assertThat(dataLayer).isEqualTo([{
+      recaptcha: '{"token":"recaptcha-token","action":"test-action-v3","siteKey":"v3-site-key"}'
+    }]);
+- name: v3 - Just Get Token - Single Trigger
+  code: |
+    const mockData = {
+      version: 'v3',
+      v3SiteKey: 'v3-site-key',
+      actions: [{trigger: '45', name: 'test-action-v3', saveToDataLayer: false}]
+    };
 
+    mock('copyFromDataLayer', key => {
+      return {
+        'recaptcha': null,
+        'event': 'test-event',
+        'gtm.triggers': '12345678_45'
+      }[key];
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertThat(siteKey).isEqualTo('v3-site-key');
+    assertThat(action).isEqualTo('test-action-v3');
+    assertThat(dataLayer).isEqualTo([]);
+- name: v3 - Just Get Token - Multi Trigger
+  code: |
+    const mockData = {
+      version: 'v3',
+      v3SiteKey: 'v3-site-key',
+      actions: [{trigger: '45', name: 'test-action-v3', saveToDataLayer: false}]
+    };
+
+    mock('copyFromDataLayer', key => {
+      return {
+        'recaptcha': null,
+        'event': 'test-event',
+        'gtm.triggers': '12345678_78,12345678_45,12345678_77'
+      }[key];
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify correct action was found.
+    assertThat(action).isEqualTo('test-action-v3');
+
+    action = null;
+
+    mock('copyFromDataLayer', key => {
+      return {
+        'recaptcha': null,
+        'event': 'test-event',
+        'gtm.triggers': '12345678_45,12345678_77'
+      }[key];
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify correct action was found.
+    assertThat(action).isEqualTo('test-action-v3');
+
+    action = null;
+
+    mock('copyFromDataLayer', key => {
+      return {
+        'recaptcha': null,
+        'event': 'test-event',
+        'gtm.triggers': '12345678_77,12345678_45'
+      }[key];
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify correct action was found.
+    assertThat(action).isEqualTo('test-action-v3');
+setup: |-
   let dataLayer = [];
   mock('createQueue', name => {
     return item => dataLayer.push(item);
@@ -692,6 +817,6 @@ setup: |-
 
 ___NOTES___
 
-Created on 8/14/2023, 5:58:01 PM
+Created on 9/14/2023, 4:14:35 PM
 
 
