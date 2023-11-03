@@ -7,6 +7,8 @@ Copyright 2023 Google LLC.
 ## Description
 This set of tag templates both run the reCAPTCHA library to generate a reCAPTCHA token and send the token to the reCAPTCHA API to interpret it and get a score. This score can be attached to the event data and the tags called again, saved to a BigQuery table of your choosing, or both.
 
+An alternative library (recaptcha.js) has also been included for those who don't use or can't use Google Tag Manager (GTM) and Server-side Google Tag Manager (sGTM). This library is a simple wrapper around reCAPTCHA that makes implementing on your site more straightforward.
+
 ## What's the Purpose of This Score?
 * If associated with the event data it can be used as a real-time indicator of the quality of a lead to filter out low quality (bot/spam/bad actor/etc) conversion events.
 * If saved to BigQuery or associated to Google Analytics events as a user property or custom parameter it can be pulled later and connected to the form data via the client ID to avoid sending low quality leads downstream (automated process lead quality indicator) or avoid the manual effort required to follow up with low quality leads (visual lead quality indicator).
@@ -100,7 +102,8 @@ This set of tag templates both run the reCAPTCHA library to generate a reCAPTCHA
     * This is what loads the necessary library.
     * **Important:** The tag will not work properly if this step is missed.
 8. Setup **Triggers** for all points during the user experience where you want the reCAPTCHA Tag to make an execute request to reCAPTCHA **except for the form submission or other event you want to actually score**.
-    * Adding these strategically helps reCAPTCHA better identify bad actors.
+    * Adding these strategically for meaningful user interactions with your site helps reCAPTCHA better identify bad actors.
+    * Avoid adding a trigger on page load as the data available at this point in the user journey is limited and not useful.
     * To setup a **Trigger** click in the **Triggering** box, click on the plus (**+**) and within the **Choose a Trigger** window select the plus (**+**) in the top right corner, then click within the **Trigger Configuration** box and select anything you want to act as the trigger (use a trigger group under other if you want to group multiple actions into a single trigger), configure it, name it, and save.
 9. Once all **Triggers** are setup save the tag configuration (the overlay will close and you'll be left with the list of tags), then right click on each of the **Firing Triggers** (these Trigger Groups that were just created) next to (associated with) your reCAPTCHA tag and **Copy Link Address** for each and paste them into a doc/notepad. The last number in these URLs (i.e. 77 for a URL that looks like this: https://tagmanager.google.com/#/container/accounts/123456789/containers/12345678/workspaces/1234/triggers/77) is the **Trigger** identifier. Use these numbers (77 in this example) to configure your reCAPTCHA Tag **Trigger** to **Action** mapping. The **Action** in this mapping should be descriptive and human readable (a to z and underscores allowed) as this helps with troubleshooting should it be necessary. Set **Yes** for any action you expressly want the reCAPTCHA data saved to the data layer for (this data will be pulled from the data layer, sent with your event, and parsed to generate a reCAPTCHA score - more details on setting this up can be found in the next section).
 
