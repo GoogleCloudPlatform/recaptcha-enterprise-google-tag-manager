@@ -10,7 +10,7 @@
     "id": "brand_dummy",
     "displayName": ""
   },
-  "description": "Handle reCAPTCHA library injection and token fetch then attach token to 'recaptcha' variable in the data layer.",
+  "description": "Handle reCAPTCHA library injection, calling of reCAPTCHA execute to gather data, and if assessing an action then saves the response token from reCAPTCHA to the data layer.",
   "containerContexts": [
     "WEB"
   ]
@@ -21,79 +21,91 @@ ___TEMPLATE_PARAMETERS___
 
 [
   {
+    "type": "TEXT",
+    "name": "config",
+    "displayName": "Config",
+    "simpleValueType": true,
+    "help": "Use the configuration variable you created with the reCAPTCHA variable template provided with the solution."
+  },
+  {
     "type": "SELECT",
-    "name": "version",
-    "displayName": "Version",
+    "name": "behavior",
+    "displayName": "Behavior",
     "selectItems": [
       {
-        "value": "v3",
-        "displayValue": "v3"
+        "value": "initialize",
+        "displayValue": "Initialize"
       },
       {
-        "value": "enterprise",
-        "displayValue": "Enterprise"
+        "value": "gatherData",
+        "displayValue": "Gather Data"
+      },
+      {
+        "value": "assess",
+        "displayValue": "Assess"
       }
     ],
-    "simpleValueType": true
+    "simpleValueType": true,
+    "help": "Are you initializing the reCAPTCHA library (on page initialization), gathering data via the reCAPTCHA library (calling execute to capture an action), or assessing the action in real-time (calling execute to capture an action and then saving the reCAPTCHA payload to the data layer to be sent with an event and assessed by sGTM and the reCAPTCHA Enterprise API)."
   },
   {
     "type": "TEXT",
-    "name": "v3SiteKey",
-    "displayName": "Site Key",
+    "name": "action",
+    "displayName": "Action",
     "simpleValueType": true,
-    "enablingConditions": [
+    "help": "This will be sent to reCAPTCHA as the action name. Should be human readable must only included alphabetic characters (a-z) or underscores (_).",
+    "valueValidators": [
       {
-        "paramName": "version",
-        "paramValue": "v3",
-        "type": "EQUALS"
-      }
-    ]
-  },
-  {
-    "type": "TEXT",
-    "name": "enterpriseSiteKey",
-    "displayName": "Enterprise Key ID",
-    "simpleValueType": true,
-    "enablingConditions": [
-      {
-        "paramName": "version",
-        "paramValue": "enterprise",
-        "type": "EQUALS"
-      }
-    ]
-  },
-  {
-    "type": "SIMPLE_TABLE",
-    "name": "actions",
-    "displayName": "",
-    "simpleTableColumns": [
-      {
-        "defaultValue": "",
-        "displayName": "Trigger",
-        "name": "trigger",
-        "type": "TEXT"
-      },
-      {
-        "defaultValue": "",
-        "displayName": "Action",
-        "name": "name",
-        "type": "TEXT"
-      },
-      {
-        "defaultValue": false,
-        "displayName": "Save to Data Layer",
-        "name": "saveToDataLayer",
-        "type": "SELECT",
-        "selectItems": [
-          {
-            "value": false,
-            "displayValue": "No"
-          },
-          {
-            "value": true,
-            "displayValue": "Yes"
-          }
+        "type": "REGEX",
+        "args": [
+          "^[a-zA-Z_]+$"
         ]
+      },
+      {
+        "type": "NON_EMPTY"
+      }
+    ],
+    "enablingConditions": [
+      {
+        "paramName": "behavior",
+        "paramValue": "initialize",
+        "type": "NOT_EQUALS"
+      }
+    ]
+  },
+  {
+    "type": "LABEL",
+    "name": "initializeLabel",
+    "displayName": "\u003cbr\u003e\u003cstrong\u003eRequirements:\u003c/strong\u003e\u003cbr\u003e\nThe Initialize behavior requires the \"Initialization - All Pages\" trigger to be added to this tag in order for it to operate properly.\u003cbr\u003e\u0026nbsp;",
+    "enablingConditions": [
+      {
+        "paramName": "behavior",
+        "paramValue": "initialize",
+        "type": "EQUALS"
+      }
+    ]
+  },
+  {
+    "type": "LABEL",
+    "name": "gatherDataLabel",
+    "displayName": "\u003cbr\u003e\u003cstrong\u003eRequirements:\u003c/strong\u003e\u003cbr\u003e The Gather Data behavior requires there be at least one trigger added directly to this tag in order for it to operate properly.\u003cbr\u003e\u0026nbsp;",
+    "enablingConditions": [
+      {
+        "paramName": "behavior",
+        "paramValue": "gatherData",
+        "type": "EQUALS"
+      }
+    ]
+  },
+  {
+    "type": "LABEL",
+    "name": "assessLabel",
+    "displayName": "\u003cbr\u003e\u003cstrong\u003eRequirements:\u003c/strong\u003e\u003cbr\u003e The Assess behavior requires there be no trigger added directly to this tag in order for it to operate properly. Instead add this tag to the GA4 Event tag you want to associate with this action as a Setup Tag under Advanced Settings \u003e Tag Sequencing \u003e Fire a tag before. Once this is done, add an Event Parameter to that same GA4 Event tag called recaptcha that targets the recaptcha object in the data layer (which will be added by this tag).\u003cbr\u003e\u0026nbsp;",
+    "enablingConditions": [
+      {
+        "paramName": "behavior",
+        "paramValue": "assess",
+        "type": "EQUALS"
       }
     ]
   }
@@ -123,41 +135,21 @@ const copyFromWindow = require('copyFromWindow');
 const createQueue = require('createQueue');
 const json = require('JSON');
 const dataLayer = {
-  push: createQueue('dataLayer'),
-  get: require('copyFromDataLayer')
+  push: createQueue('dataLayer')
 };
 
-const configurations = {
-  v3: {
-    library: 'https://www.google.com/recaptcha/api.js',
-    siteKey: data.v3SiteKey,
-    readyMethod: 'grecaptcha.ready',
-    executeMethod: 'grecaptcha.execute'
-  },
-  enterprise: {
-    library: 'https://www.google.com/recaptcha/enterprise.js',
-    siteKey: data.enterpriseSiteKey,
-    readyMethod: 'grecaptcha.enterprise.ready',
-    executeMethod: 'grecaptcha.enterprise.execute'
-  }
-};
-
-const config = configurations[data.version];
+const config = data.config;
 const success = data.gtmOnSuccess;
 const failure = data.gtmOnFailure;
 
 ensureLibraryLoaded(() => {
-  const eventName = dataLayer.get('event');
-  if (eventName === 'gtm.init') {
+  if (data.behavior === 'initialize') {
     success();
   } else {
-    const triggers = dataLayer.get('gtm.triggers');
-    const action = getAction(triggers);
-
-    if (action) {
-      generateToken(action.name, token => {
-       if (action.saveToDataLayer) {
-         saveToDataLayer(token, action.name);
+    if (data.action) {
+      generateToken(data.action, token => {
+       if (data.behavior === 'assess') {
+         saveToDataLayer(token, data.action);
        }
        success();
       }, failure);
@@ -224,25 +216,6 @@ function saveToDataLayer(token, action) {
       siteKey: config.siteKey
     })
   });
-}
-
-/**
- * Get the appropriate action based on the triggers that caused this tag to fire
- * using the actions mapping provided in the configuration of the tag.
- *
- * @param {string} triggers
- *
- * @returns {object|null} The action or null if not found.
- */
-function getAction(triggers) {
-  for (const action of data.actions) {
-    const actionTriggerSuffix = '_' + action.trigger;
-    if (triggers.search(actionTriggerSuffix + '(,|$)') !== -1) {
-      return action;
-    }
-  }
-
-  return null;
 }
 
 
@@ -495,36 +468,6 @@ ___WEB_PERMISSIONS___
       "isEditedByUser": true
     },
     "isRequired": true
-  },
-  {
-    "instance": {
-      "key": {
-        "publicId": "read_data_layer",
-        "versionId": "1"
-      },
-      "param": [
-        {
-          "key": "keyPatterns",
-          "value": {
-            "type": 2,
-            "listItem": [
-              {
-                "type": 1,
-                "string": "event"
-              },
-              {
-                "type": 1,
-                "string": "gtm.triggers"
-              }
-            ]
-          }
-        }
-      ]
-    },
-    "clientAnnotations": {
-      "isEditedByUser": true
-    },
-    "isRequired": true
   }
 ]
 
@@ -535,18 +478,9 @@ scenarios:
 - name: Enterprise - Initialization
   code: |-
     const mockData = {
-      version: 'enterprise',
-      enterpriseSiteKey: 'enterprise-site-key',
-      actions: [{trigger: '90', name: 'test-action'}]
+      config: enterpriseConfig,
+      behavior: 'initialize'
     };
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'gtm.init',
-        'gtm.triggers': '7'
-      }[key];
-    });
 
     // Call runCode to run the template's code.
     runCode(mockData);
@@ -556,39 +490,22 @@ scenarios:
 - name: v3 - Initialization
   code: |-
     const mockData = {
-      version: 'v3',
-      v3SiteKey: 'v3-site-key',
-      actions: [{trigger: '45', name: 'test-action-v3'}]
+      config: v3Config,
+      behavior: 'initialize'
     };
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'gtm.init',
-        'gtm.triggers': '7'
-      }[key];
-    });
 
     // Call runCode to run the template's code.
     runCode(mockData);
 
     assertThat(injectedScript).isEqualTo(
       'https://www.google.com/recaptcha/api.js?render=v3-site-key');
-- name: Enterprise - Get Token & Save
+- name: Enterprise - Assess
   code: |+
     const mockData = {
-      version: 'enterprise',
-      enterpriseSiteKey: 'enterprise-site-key',
-      actions: [{trigger: '90', name: 'test-action', saveToDataLayer: true}]
+      config: enterpriseConfig,
+      behavior: 'assess',
+      action: 'test-action'
     };
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'test-event',
-        'gtm.triggers': '12345678_90'
-      }[key];
-    });
 
     // Call runCode to run the template's code.
     runCode(mockData);
@@ -600,21 +517,13 @@ scenarios:
       recaptcha: '{"token":"recaptcha-token","action":"test-action","siteKey":"enterprise-site-key"}'
     }]);
 
-- name: Enterprise - Just Get Token - Single Trigger
+- name: Enterprise - Gather Data
   code: |+
     const mockData = {
-      version: 'enterprise',
-      enterpriseSiteKey: 'enterprise-site-key',
-      actions: [{trigger: '90', name: 'test-action', saveToDataLayer: false}]
+      config: enterpriseConfig,
+      behavior: 'gatherData',
+      action: 'test-action'
     };
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'test-event',
-        'gtm.triggers': '12345678_90'
-      }[key];
-    });
 
     // Call runCode to run the template's code.
     runCode(mockData);
@@ -624,74 +533,13 @@ scenarios:
     assertThat(action).isEqualTo('test-action');
     assertThat(dataLayer).isEqualTo([]);
 
-- name: Enterprise - Just Get Token - Multi Trigger
+- name: v3 - Assess
   code: |
     const mockData = {
-      version: 'enterprise',
-      enterpriseSiteKey: 'enterprise-site-key',
-      actions: [{trigger: '90', name: 'test-action', saveToDataLayer: false}]
+      config: v3Config,
+      behavior: 'assess',
+      action: 'test-action-v3'
     };
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'test-event',
-        'gtm.triggers': '12345678_95,12345678_90,12345678_11'
-      }[key];
-    });
-
-    // Call runCode to run the template's code.
-    runCode(mockData);
-
-    // Verify correct action was found.
-    assertThat(action).isEqualTo('test-action');
-
-    action = null;
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'test-event',
-        'gtm.triggers': '12345678_90,12345678_11'
-      }[key];
-    });
-
-    // Call runCode to run the template's code.
-    runCode(mockData);
-
-    // Verify correct action was found.
-    assertThat(action).isEqualTo('test-action');
-
-    action = null;
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'test-event',
-        'gtm.triggers': '12345678_95,12345678_90'
-      }[key];
-    });
-
-    // Call runCode to run the template's code.
-    runCode(mockData);
-
-    // Verify correct action was found.
-    assertThat(action).isEqualTo('test-action');
-- name: v3 - Get Token & Save
-  code: |
-    const mockData = {
-      version: 'v3',
-      v3SiteKey: 'v3-site-key',
-      actions: [{trigger: '45', name: 'test-action-v3', saveToDataLayer: true}]
-    };
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'test-event',
-        'gtm.triggers': '12345678_45'
-      }[key];
-    });
 
     // Call runCode to run the template's code.
     runCode(mockData);
@@ -702,21 +550,13 @@ scenarios:
     assertThat(dataLayer).isEqualTo([{
       recaptcha: '{"token":"recaptcha-token","action":"test-action-v3","siteKey":"v3-site-key"}'
     }]);
-- name: v3 - Just Get Token - Single Trigger
+- name: v3 - Gather Data
   code: |
     const mockData = {
-      version: 'v3',
-      v3SiteKey: 'v3-site-key',
-      actions: [{trigger: '45', name: 'test-action-v3', saveToDataLayer: false}]
+      config: v3Config,
+      behavior: 'gatherData',
+      action: 'test-action-v3'
     };
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'test-event',
-        'gtm.triggers': '12345678_45'
-      }[key];
-    });
 
     // Call runCode to run the template's code.
     runCode(mockData);
@@ -725,60 +565,21 @@ scenarios:
     assertThat(siteKey).isEqualTo('v3-site-key');
     assertThat(action).isEqualTo('test-action-v3');
     assertThat(dataLayer).isEqualTo([]);
-- name: v3 - Just Get Token - Multi Trigger
-  code: |
-    const mockData = {
-      version: 'v3',
-      v3SiteKey: 'v3-site-key',
-      actions: [{trigger: '45', name: 'test-action-v3', saveToDataLayer: false}]
-    };
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'test-event',
-        'gtm.triggers': '12345678_78,12345678_45,12345678_77'
-      }[key];
-    });
-
-    // Call runCode to run the template's code.
-    runCode(mockData);
-
-    // Verify correct action was found.
-    assertThat(action).isEqualTo('test-action-v3');
-
-    action = null;
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'test-event',
-        'gtm.triggers': '12345678_45,12345678_77'
-      }[key];
-    });
-
-    // Call runCode to run the template's code.
-    runCode(mockData);
-
-    // Verify correct action was found.
-    assertThat(action).isEqualTo('test-action-v3');
-
-    action = null;
-
-    mock('copyFromDataLayer', key => {
-      return {
-        'recaptcha': null,
-        'event': 'test-event',
-        'gtm.triggers': '12345678_77,12345678_45'
-      }[key];
-    });
-
-    // Call runCode to run the template's code.
-    runCode(mockData);
-
-    // Verify correct action was found.
-    assertThat(action).isEqualTo('test-action-v3');
 setup: |-
+  const enterpriseConfig = {
+    library: 'https://www.google.com/recaptcha/enterprise.js',
+    siteKey: 'enterprise-site-key',
+    readyMethod: 'grecaptcha.enterprise.ready',
+    executeMethod: 'grecaptcha.enterprise.execute'
+  };
+
+  const v3Config = {
+    library: 'https://www.google.com/recaptcha/api.js',
+    siteKey: 'v3-site-key',
+    readyMethod: 'grecaptcha.ready',
+    executeMethod: 'grecaptcha.execute'
+  };
+
   let dataLayer = [];
   mock('createQueue', name => {
     return item => dataLayer.push(item);
@@ -817,6 +618,6 @@ setup: |-
 
 ___NOTES___
 
-Created on 9/14/2023, 4:14:35 PM
+Created on 12/1/2023, 3:04:22 PM
 
 

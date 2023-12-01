@@ -21,7 +21,7 @@ An alternative library (recaptcha.js) has also been included for those who don't
 ## Installation and Configuration
 ### Download the Repository and Unzip/Extract
 1. [Download the repository](https://professional-services.googlesource.com/solutions/lead_qa/+archive/refs/heads/main.tar.gz) and extract the contents.
-2. The **server_tag.tpl** file is the .tpl file you'll need for the next step.
+2. The **web_tag.tpl**, **web_config_variable.tpl**, **server_tag.tpl** files are the .tpl files you'll need for the next steps.
 
 ### BigQuery Setup
 (Necessary if Planning to Save Scores in BigQuery Table)
@@ -84,38 +84,64 @@ An alternative library (recaptcha.js) has also been included for those who don't
 10. Save your tag (top right).
 
 ### Web Tag Setup
+#### Import the Web Google Tag Manager Config Variable Template
+1. Once looking at the web container within Tag Manager select **Templates** in the left menu.
+2. On the templates page next to **Variable Templates** select **New**.
+3. From here select the **three vertical dots menu** next to save and select **Import**.
+4. Select the **Web Config Variable template** (web_config_variable.tpl file as mentioned above) and once loaded select **Save** in the upper right corner.
+
+#### Create & Configure the Variable That Will Use This Template
+1. Once looking at the web container within Tag Manager select **Variables** in the left menu.
+2. On the variables page next to **User-Defined Variables** select **New**.
+3. Change the name in the top left to something more identifiable for the purpose such as **reCAPTCHA Config**.
+4. Select anywhere in the **Variable Configuration** box.
+5. In the menu that appears select **reCAPTCHA Configuration**.
+6. Select the appropriate **Version** of reCAPTCHA (v3 or Enterprise).
+7. Enter the necessary configuration settings for the version selected (see above **reCAPTCHA Setup** for details on how to acquire these).
+8. Select **Save** in the upper right corner.
+
 #### Import the Web Google Tag Manager Tag Template
 1. Once looking at the web container within Tag Manager select **Templates** in the left menu.
 2. On the templates page next to **Tag Templates** select **New**.
 3. From here select the **three vertical dots menu** next to save and select **Import**.
 4. Select the **Web Tag template** (web_tag.tpl file as mentioned above) and once loaded select **Save** in the upper right corner.
 
-#### Create & Configure the Tag That Will Use This Template
+#### Create & Configure the Tags That Will Use This Template
+> You'll need to create at least two separate tags using this template (one for initialization and one for assessing).
 1. Once looking at the web container within Tag Manager select **Tags** in the left menu.
 2. On the tags page next to **Tags** select **New**.
 3. Change the name in the top left to something more identifiable for the purpose such as **reCAPTCHA Tag**.
 4. Select anywhere in the **Tag Configuration** box.
-5. In the menu that appears select **reCAPTCHA Tag**.
-6. Select the appropriate **Version** of reCAPTCHA (v3 or Enterprise).
-7. Enter the necessary configuration settings for the version selected (see above **reCAPTCHA Setup** for details on how to acquire these).
-9. Add an **Initialization - All Pages** trigger.
-    * This is what loads the necessary library.
-    * **Important:** The tag will not work properly if this step is missed.
-8. Setup **Triggers** for all points during the user experience where you want the reCAPTCHA Tag to make an execute request to reCAPTCHA **except for the form submission or other event you want to actually score**.
-    * Adding these strategically for meaningful user interactions with your site helps reCAPTCHA better identify bad actors.
-    * Avoid adding a trigger on page load as the data available at this point in the user journey is limited and not useful.
-    * To setup a **Trigger** click in the **Triggering** box, click on the plus (**+**) and within the **Choose a Trigger** window select the plus (**+**) in the top right corner, then click within the **Trigger Configuration** box and select anything you want to act as the trigger (use a trigger group under other if you want to group multiple actions into a single trigger), configure it, name it, and save.
-9. Once all **Triggers** are setup save the tag configuration (the overlay will close and you'll be left with the list of tags), then right click on each of the **Firing Triggers** (these Trigger Groups that were just created) next to (associated with) your reCAPTCHA tag and **Copy Link Address** for each and paste them into a doc/notepad. The last number in these URLs (i.e. 77 for a URL that looks like this: https://tagmanager.google.com/#/container/accounts/123456789/containers/12345678/workspaces/1234/triggers/77) is the **Trigger** identifier. Use these numbers (77 in this example) to configure your reCAPTCHA Tag **Trigger** to **Action** mapping. The **Action** in this mapping should be descriptive and human readable (a to z and underscores allowed) as this helps with troubleshooting should it be necessary. Set **Yes** for any action you expressly want the reCAPTCHA data saved to the data layer for (this data will be pulled from the data layer, sent with your event, and parsed to generate a reCAPTCHA score - more details on setting this up can be found in the next section).
+5. In the menu that appears select **reCAPTCHA**.
+6. In the **Config** box select the **[ + ]** and select **reCAPTCHA Config**.
 
-#### Add an Event Tag or Edit an Existing One (The Event/Action You Want to Score)
-1. Add a new trigger to this event tag following the same steps as above.
-    * If it's a Form Submission trigger and the form submission would generally cause it to advance to another page or refresh you'll want to have it configured to **Wait for Tags** (so, this should be checked and should be given at least a second - that being 1000 milliseconds).
-3. Under **Event Parameters** on this GA4 event tag add a row where the **Parameter Name** is **recaptcha** and the value points to the **Data Layer Variable** also named **recaptcha**.
-    * Click the plus block next to the value input box.
-    * Click the plus at the top right corner.
-    * Click the **Varaible Configuration** box.
-    * Click **Data Layer Variable** under **Page Variables**.
-    * In **Data Layer Variable Name** type **recaptcha**.
-    * Give the variable a name (top left) and click **Save** (top right).
-4. Under **Advanced Settings** > **Tag Sequencing** check **Fire a tag before Form Interaction fires** and select your reCAPTCHA Tag as the **Setup Tag**.
-5. Save your tag configuration.
+##### Initialization Tag
+> Loads the reCAPTCHA library.
+7. In the **Behavior** box select **Initialize**.
+8. Add an **Initialization - All Pages** trigger.
+
+##### Gather Data Tag
+> Calls reCAPTCHA execute with an action name. You should add one or more of these strategically for meaningful user interactions with your site. This will helps reCAPTCHA better identify bad actors.
+7. In the **Behavior** box select **Gather Data**.
+8. In the **Action** box type in a human readable name that describes the meaningful user interaction.
+9. Add **Trigger(s)** that encapsulate the user behavior associated with the action.
+    * **Notice:** Avoid adding an Page Load trigger such as "All Pages" as the data available at this point in the user journey is limited and not useful.
+
+##### Assess Tag
+> Calls reCAPTCHA execute with an action name, then attaches the resulting token along with other data to the data layer under a variable called "recaptcha". These tags should be associated with the user interaction that you ultimately want to score in real-time.
+7. In the **Behavior** box select **Assess**.
+8. In the **Action** box type in a human readable name that describes the meaningful user interaction.
+9. Save this tag.
+10. Edit your existing GA4 Event tag.
+    > This event will act as the delivery mechanism for the reCAPTCHA token and other related data so that sGTM can send it to reCAPTCHA Enterprise API to create an assessment which has a score.
+
+    > **Notice:** If you're using a Form Submission trigger for this GA4 Event tag and the form submission would generally cause it to advance to another page or refresh you'll want to have it configured to **Wait for Tags** (so, this should be checked and should be given at least a second - that being 1000 milliseconds).
+    * Under **Event Parameters** on this GA4 event tag add a row where the **Parameter Name** is **recaptcha** and the value points to the **Data Layer Variable** also named **recaptcha**.
+        * Click the plus block next to the value input box.
+        * Click the plus at the top right corner.
+        * Click the **Varaible Configuration** box.
+        * Click **Data Layer Variable** under **Page Variables**.
+        * In **Data Layer Variable Name** type **recaptcha**.
+        * Give the variable a name (top left) and click **Save** (top right).
+    * Under **Advanced Settings** > **Tag Sequencing** check **Fire a tag before ... fires** and select your reCAPTCHA Assess Behavior Tag as the **Setup Tag**.
+    * Save your tag configuration.

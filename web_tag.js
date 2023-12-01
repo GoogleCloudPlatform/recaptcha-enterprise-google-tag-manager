@@ -19,41 +19,21 @@ const copyFromWindow = require('copyFromWindow');
 const createQueue = require('createQueue');
 const json = require('JSON');
 const dataLayer = {
-  push: createQueue('dataLayer'),
-  get: require('copyFromDataLayer')
+  push: createQueue('dataLayer')
 };
 
-const configurations = {
-  v3: {
-    library: 'https://www.google.com/recaptcha/api.js',
-    siteKey: data.v3SiteKey,
-    readyMethod: 'grecaptcha.ready',
-    executeMethod: 'grecaptcha.execute'
-  },
-  enterprise: {
-    library: 'https://www.google.com/recaptcha/enterprise.js',
-    siteKey: data.enterpriseSiteKey,
-    readyMethod: 'grecaptcha.enterprise.ready',
-    executeMethod: 'grecaptcha.enterprise.execute'
-  }
-};
-
-const config = configurations[data.version];
+const config = data.config;
 const success = data.gtmOnSuccess;
 const failure = data.gtmOnFailure;
 
 ensureLibraryLoaded(() => {
-  const eventName = dataLayer.get('event');
-  if (eventName === 'gtm.init') {
+  if (data.behavior === 'initialize') {
     success();
   } else {
-    const triggers = dataLayer.get('gtm.triggers');
-    const action = getAction(triggers);
-
-    if (action) {
-      generateToken(action.name, token => {
-       if (action.saveToDataLayer) {
-         saveToDataLayer(token, action.name);
+    if (data.action) {
+      generateToken(data.action, token => {
+       if (data.behavior === 'assess') {
+         saveToDataLayer(token, data.action);
        }
        success();
       }, failure);
@@ -120,23 +100,4 @@ function saveToDataLayer(token, action) {
       siteKey: config.siteKey
     })
   });
-}
-
-/**
- * Get the appropriate action based on the triggers that caused this tag to fire
- * using the actions mapping provided in the configuration of the tag.
- *
- * @param {string} triggers
- *
- * @returns {object|null} The action or null if not found.
- */
-function getAction(triggers) {
-  for (const action of data.actions) {
-    const actionTriggerSuffix = '_' + action.trigger;
-    if (triggers.search(actionTriggerSuffix + '(,|$)') !== -1) {
-      return action;
-    }
-  }
-
-  return null;
 }
