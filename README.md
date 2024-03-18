@@ -1,4 +1,4 @@
-# Lead QA (Quality Assurance) Documentation
+# reCAPTCHA Enterprise Google Tag Manager Documentation
 
 Copyright 2023 Google LLC.
 
@@ -20,7 +20,7 @@ An alternative library (recaptcha.js) has also been included for those who don't
 
 ## Installation and Configuration
 ### Download the Repository and Unzip/Extract
-1. [Download the repository](https://github.com/google-marketing-solutions/recaptcha-lead-qa/archive/refs/heads/main.zip) and extract the contents.
+1. [Download the repository](https://github.com/GoogleCloudPlatform/recaptcha-enterprise-google-tag-manager/archive/refs/heads/main.zip) and extract the contents.
 2. The **web_tag.tpl**, **web_config_variable.tpl**, **server_tag.tpl** files are the .tpl files you'll need for the next steps.
 
 ### BigQuery Setup
