@@ -63,19 +63,6 @@ ___TEMPLATE_PARAMETERS___
     ]
   },
   {
-    "type": "TEXT",
-    "name": "apiKey",
-    "displayName": "Enterprise API Key",
-    "simpleValueType": true,
-    "enablingConditions": [
-      {
-        "paramName": "version",
-        "paramValue": "enterprise",
-        "type": "EQUALS"
-      }
-    ]
-  },
-  {
     "type": "CHECKBOX",
     "name": "attachToEventData",
     "checkboxText": "Attach Score to Event Data",
@@ -150,6 +137,10 @@ ___SANDBOXED_JS_FOR_SERVER___
 // capture start-time very first to ensure accurate performance checks.
 const timestamp = require('getTimestampMillis');
 const startTime = timestamp();
+
+const auth = require('getGoogleAuth')({
+  scopes: ['https://www.googleapis.com/auth/cloud-platform']
+});
 
 // request and response specific methods.
 const request = {
@@ -289,7 +280,7 @@ function getAssessmentFromSiteVerify(eventData, recaptcha) {
  */
 function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
   return promise((resolve, reject) => {
-    const url = enterpriseApiUrl + '/projects/' + data.cloudProjectId + '/assessments?key=' + data.apiKey;
+    const url = enterpriseApiUrl + '/projects/' + data.cloudProjectId + '/assessments';
     const body = json.stringify({
       event: {
         token: recaptcha.token,
@@ -304,6 +295,7 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
       headers: {
         'Content-Type': 'application/json; charset=utf-8'
       },
+      authorization: auth,
       method: 'POST',
       timeout: 5000
     }, body)
@@ -621,6 +613,32 @@ ___SERVER_PERMISSIONS___
       "isEditedByUser": true
     },
     "isRequired": true
+  },
+  {
+    "instance": {
+      "key": {
+        "publicId": "use_google_credentials",
+        "versionId": "1"
+      },
+      "param": [
+        {
+          "key": "allowedScopes",
+          "value": {
+            "type": 2,
+            "listItem": [
+              {
+                "type": 1,
+                "string": "https://www.googleapis.com/auth/cloud-platform"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "clientAnnotations": {
+      "isEditedByUser": true
+    },
+    "isRequired": true
   }
 ]
 
@@ -758,6 +776,6 @@ setup: "const json = require('JSON');\nconst promise = require('Promise').create
 
 ___NOTES___
 
-Created on 8/11/2023, 1:37:21 PM
+Created on 2/16/2024, 2:03:47 PM
 
 

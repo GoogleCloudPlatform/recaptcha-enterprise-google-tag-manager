@@ -18,6 +18,10 @@
 const timestamp = require('getTimestampMillis');
 const startTime = timestamp();
 
+const auth = require('getGoogleAuth')({
+  scopes: ['https://www.googleapis.com/auth/cloud-platform']
+});
+
 // request and response specific methods.
 const request = {
   isAnalytics: require('isRequestMpv2'),
@@ -156,7 +160,7 @@ function getAssessmentFromSiteVerify(eventData, recaptcha) {
  */
 function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
   return promise((resolve, reject) => {
-    const url = enterpriseApiUrl + '/projects/' + data.cloudProjectId + '/assessments?key=' + data.apiKey;
+    const url = enterpriseApiUrl + '/projects/' + data.cloudProjectId + '/assessments';
     const body = json.stringify({
       event: {
         token: recaptcha.token,
@@ -171,6 +175,7 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
       headers: {
         'Content-Type': 'application/json; charset=utf-8'
       },
+      authorization: auth,
       method: 'POST',
       timeout: 5000
     }, body)

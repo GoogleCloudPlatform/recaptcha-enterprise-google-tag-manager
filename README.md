@@ -44,10 +44,8 @@ An alternative library (recaptcha.js) has also been included for those who don't
     * [Create a reCAPTCHA Enterprise key](https://console.cloud.google.com/security/recaptcha/create).
         * **Important:** Do not use the same Enterprise Key ID for multiple websites/domains. If configured this way it will not work properly. Create and use multiple Enterprise Key IDs where necessary.
     * Once created copy your **Enterprise Key ID** (listed as ID at the top with a copy button next to it) and enter it within the web tag configuration.
-    * [Open **Credentials** in Google Cloud](https://console.cloud.google.com/apis/credentials) and create an API key for reCAPTCHA Enterprise API (Create Credentials **>** API key).
-    * Once created select **Edit API key** under **Actions** (three dots).
-    * Restrict it to the **IP Addresses** of your server-side Google Tag Manager instance under **application restriction** (if possible) and restrict it to the **reCAPTCHA Enterprise API** under **API restrictions**.
-    * Copy the **API Key** (top right) and paste this within the server-side tag configuration under **Enterprise API Key**.
+    * [Open **IAM** in Google Cloud](https://console.cloud.google.com/iam-admin/iam), edit (click the pencil icon next to) the service account you're using for sGTM (if you're using App Engine then this will be something like name@appspot.gserviceaccount.com), select **Add Another Role**, enter "reCAPTCHA Enterprise Agent", and finally **Save**.
+        * This is important because it's what allows sGTM access to communicate with the reCAPTCHA Enterprise API.
 
 ### Server-side Tag Setup
 #### Import the Server-side Google Tag Manager Tag Template
