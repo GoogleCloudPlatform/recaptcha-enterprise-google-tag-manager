@@ -40,6 +40,7 @@ const addEventCallback = require('addEventCallback');
 const templateDataStorage = require('templateDataStorage');
 const sha256 = require('sha256Sync');
 const hashify = (data) => sha256(JSON.stringify(data));
+const defer = require('callLater');
 const storage = {
   set: templateDataStorage.setItemCopy,
   get: (key) => {
@@ -57,7 +58,6 @@ const storage = {
 const auth = require('getGoogleAuth')({
   scopes: ['https://www.googleapis.com/auth/cloud-platform']
 });
-const defer = require('callLater');
 
 if (request.isAnalytics()) {
   const eventData = request.eventData();
