@@ -59,7 +59,7 @@ An alternative library (recaptcha.js) has also been included for those who don't
 2. On the variables page next to **Variables** select **New**.
 3. Change the name in the top left to something more identifiable for the purpose such as **reCAPTCHA**.
 4. Select anywhere in the **Variable Configuration** box.
-5. In the menu that appears, select **reCAPTCHA** (or the name given to the variable template when created in step 3).
+5. In the menu that appears, select **reCAPTCHA**.
 6. Select the appropriate **Version** of reCAPTCHA (V3 for personal use and Enterprise for business use).
 7. Enter the necessary configuration settings for the version selected (see above **reCAPTCHA Setup** for details on how to acquire these).
 8. Select the desired type of the variable (whether you want it to be the entire assessment object returned from reCAPTCHA or just the score).
@@ -74,7 +74,7 @@ An alternative library (recaptcha.js) has also been included for those who don't
         * Useful for attributing it to the form data for a lead quality indicator for automated processes.
         * Can be used as a visual indicator if pulled into a CRM and associated with the form data.
         * **Important:** Using BigQuery requires some upfront configuration (see above **BigQuery Setup** for details).
-11. In your Google Analytics 4 tag make sure to exclude the raw recaptcha data from the data that's sent (GA4 Tag > Event Parameters > Parameters to Exclude > Name = recaptcha). This data in it's raw form is not useful later as it's already been processed and further calls to reCAPTCHA with it will be treated as a duplicate and no assessment is returned.
+11. In your Google Analytics 4 tag make sure to exclude the raw recaptcha data from the data that's sent (GA4 Tag > Event Parameters > Parameters to Exclude > Name = recaptcha). This data in its raw form is not useful later as it's already been processed and further calls to reCAPTCHA with it will be treated as a duplicate and no assessment is returned.
 
 ### Web Tag Setup
 #### Import the Web Google Tag Manager Config Variable Template
