@@ -1,5 +1,5 @@
 /**
- * Copyright 2023 Google LLC
+ * Copyright 2024 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,10 @@
 const timestamp = require('getTimestampMillis');
 const startTime = timestamp();
 
-const auth = require('getGoogleAuth')({
-  scopes: ['https://www.googleapis.com/auth/cloud-platform']
-});
+// globals
+const siteVerifyUrl = 'https://www.google.com/recaptcha/api/siteverify';
+const enterpriseApiUrl = 'https://recaptchaenterprise.googleapis.com/v1';
+const processing = 'PROCESSING';
 
 // request and response specific methods.
 const request = {
@@ -28,42 +29,69 @@ const request = {
   eventData: require('getAllEventData')
 };
 
-const response = {
-  success: data.gtmOnSuccess,
-  failure: (error) => {
-    log('Error occurred:', error);
-    data.gtmOnFailure();
-  }
-};
-
 // utility classes/methods.
-const runContainer = require('runContainer');
 const logToConsole = require('logToConsole');
 const sendHttpRequest = require('sendHttpRequest');
 const promise = require('Promise').create;
 const deleteProperty = require('Object').delete;
 const encodeUriComponent = require('encodeUriComponent');
-const json = require('JSON');
-let bigQueryInsert = require('BigQuery').insert;
-
-// globals
-const siteVerifyUrl = 'https://www.google.com/recaptcha/api/siteverify';
-const enterpriseApiUrl = 'https://recaptchaenterprise.googleapis.com/v1';
+const JSON = require('JSON');
+const addEventCallback = require('addEventCallback');
+const templateDataStorage = require('templateDataStorage');
+const sha256 = require('sha256Sync');
+const hashify = (data) => sha256(JSON.stringify(data));
+const defer = require('callLater');
+const storage = {
+  set: templateDataStorage.setItemCopy,
+  get: (key) => {
+    let value = templateDataStorage.getItemCopy(key);
+    if (value === processing) {
+        defer(() => {
+          storage.get(key);
+        });
+    } else {
+      return value;
+    }
+  },
+  remove: templateDataStorage.removeItem
+};
+const auth = require('getGoogleAuth')({
+  scopes: ['https://www.googleapis.com/auth/cloud-platform']
+});
 
 if (request.isAnalytics()) {
   const eventData = request.eventData();
-  if (eventData.recaptcha) {
-    log('Processing reCAPTCHA...');
-    getAssessment(eventData)
-      .then(assessment => {
-        processAssessment(eventData, assessment)
-          .then(response.success)
-          .catch(response.failure);
-      })
-      .catch(response.failure);
+
+  if (!eventData.recaptcha) {
+    return data.defaultValueOnMissing;
   }
-} else {
-  response.success();
+
+  let hash = hashify(eventData);
+  let assessment = storage.get(hash);
+  if (assessment) {
+    log('Returning cached reCAPTCHA assessment...');
+    return assessment;
+  }
+
+  storage.set(hash, processing);
+  log('Processing reCAPTCHA...');
+  addEventCallback(() => storage.remove(hash));
+
+  return getAssessment(eventData)
+    .then(assessment => {
+      if (data.type === 'json') {
+        deleteProperty(assessment.event, 'token');
+        storage.set(hash, assessment);
+        return assessment;
+      } else {
+        storage.set(hash, assessment.riskAnalysis.score);
+        return assessment.riskAnalysis.score;
+      }
+    })
+    .catch(error => {
+      log(error);
+      return data.defaultValueOnError;
+    });
 }
 
 /**
@@ -75,7 +103,7 @@ if (request.isAnalytics()) {
  */
 function getAssessment(eventData) {
   return promise((resolve, reject) => {
-    const recaptcha = json.parse(eventData.recaptcha);
+    const recaptcha = JSON.parse(eventData.recaptcha);
 
     switch (data.version) {
       case 'v3':
@@ -120,7 +148,7 @@ function getAssessmentFromSiteVerify(eventData, recaptcha) {
     .then(response => {
       log(response.statusCode, response.body);
       if (response.statusCode === 200) {
-        const assessment = json.parse(response.body);
+        const assessment = JSON.parse(response.body);
         if (assessment['error-codes']) {
           log(assessment['error-codes']);
         }
@@ -161,7 +189,7 @@ function getAssessmentFromSiteVerify(eventData, recaptcha) {
 function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
   return promise((resolve, reject) => {
     const url = enterpriseApiUrl + '/projects/' + data.cloudProjectId + '/assessments';
-    const body = json.stringify({
+    const body = JSON.stringify({
       event: {
         token: recaptcha.token,
         siteKey: recaptcha.siteKey,
@@ -170,6 +198,8 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
         userAgent: eventData.user_agent
       }
     });
+
+    log(url, body);
 
     sendHttpRequest(url, {
       headers: {
@@ -180,8 +210,9 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
       timeout: 5000
     }, body)
     .then(response => {
+      log(response.statusCode, response.body);
       if (response.statusCode === 200) {
-        const assessment = json.parse(response.body);
+        const assessment = JSON.parse(response.body);
         const actionMatches = assessment.tokenProperties.action === assessment.event.expectedAction;
         assessment.tokenProperties.valid = actionMatches && assessment.tokenProperties.valid;
         if (assessment.tokenProperties.createTime === '1970-01-01T00:00:00Z') {
@@ -194,104 +225,6 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
     })
     .catch(reject);
   });
-}
-
-/**
- * Outputs necessary data from the assessment to the configured places.
- *
- * @param {Object} eventData Contains all data pulled from the request that came into sGTM.
- * @param {Object} assessment The reCAPTCHA assessment containing score, token validity, and reasons for score.
- */
-function processAssessment(eventData, assessment) {
-  return promise((resolve, reject) => {
-    if (data.attachToEventData) {
-      sendToTags(eventData, assessment);
-    }
-
-    if (data.outputToBigQuery) {
-      outputToBigQuery(eventData, assessment)
-        .then(resolve)
-        .catch(reject);
-    } else {
-      resolve();
-    }
-  });
-}
-
-/**
- * Outputs necessary data from the assessment to the BigQuery table specified in the configuration.
- *
- * @param {Object} eventData Contains all data pulled from the request that came into sGTM.
- * @param {string} eventData.client_id The pseudo identifier associated with a unique user.
- * @param {Object} assessment
- * @param {Object} assessment.tokenProperties
- * @param {string} assessment.tokenProperties.createTime The time the token was created.
- * @param {boolean} assessment.tokenProperties.valid Whether or not the token is considered valid.
- * @param {string} assessment.tokenProperties.invalidReason Why the token is considered invalid.
- * @param {Object} assessment.riskAnalysis
- * @param {number} assessment.riskAnalysis.score The score attributed to the token (0 being worst and 1 being best).
- * @param {string[]} assessment.riskAnalysis.reasons The reasons provided for why the score is what it is.
- * @param {string[]} assessment.riskAnalysis.extendedVerdictReasons Additional details on why the score is what it is.
- * @returns {Promise<Object>} The reCAPTCHA assessment containing score, token validity, and reasons for score.
- */
-function outputToBigQuery(eventData, assessment) {
-  const connectionInfo = {
-    projectId: data.bigQueryCloudProjectId,
-    datasetId: data.bigQueryDatasetId,
-    tableId: data.bigQueryTableId
-  };
-
-  return promise((resolve, reject) => {
-    const row = {
-      client_id: eventData.client_id,
-      risk_analysis: {
-        score: assessment.riskAnalysis.score,
-        reasons: assessment.riskAnalysis.reasons,
-        extended_verdict_reasons: assessment.riskAnalysis.extendedVerdictReasons
-      },
-      token_properties: {
-        valid: assessment.tokenProperties.valid,
-        invalid_reason: assessment.tokenProperties.invalidReason
-      }
-    };
-
-    // only attach timestamp if the token create time is available and otherwise
-    // let the table defaults set the current time.
-    if (assessment.tokenProperties.createTime) {
-      row.timestamp = assessment.tokenProperties.createTime;
-    }
-
-    // TODO: when it's possible to mock BigQuery.insert, update tests and remove this
-    // and change bigQueryInsert at top to a constant.
-    if (data.testing) {
-      bigQueryInsert = data.bigQueryInsertMock;
-    }
-
-    bigQueryInsert(connectionInfo, [row])
-      .then(resolve)
-      .catch(reject);
-  });
-}
-
-/**
- * Removes raw reCAPTCHA data, attaches necessary data from the assessment to the event data object,
- * and runs the container again which calls all the tags with this new event data.
- *
- * @param {Object} eventData Contains all data pulled from the request that came into sGTM.
- * @param {Object} assessment
- * @param {Object} assessment.riskAnalysis
- * @param {number} assessment.riskAnalysis.score The score attributed to the token (0 being worst and 1 being best).
- * @param {Object} assessment.tokenProperties
- * @param {boolean} assessment.tokenProperties.valid Whether or not the token is considered valid.
- */
-function sendToTags(eventData, assessment) {
-  deleteProperty(eventData, 'recaptcha');
-
-  eventData.recaptcha_score = assessment.riskAnalysis.score;
-  eventData.recaptcha_valid = assessment.tokenProperties.valid;
-
-  log('Sending updated event data to tags...');
-  runContainer(eventData);
 }
 
 /**
@@ -318,7 +251,7 @@ function buildQueryString(data) {
  */
 function log() {
   if (data.loggingEnabled) {
-    const starter = '[reCAPTCHA Tag]' + ' [' + (timestamp() - startTime) + 'ms]';
+    const starter = '[reCAPTCHA Variable]' + ' [' + (timestamp() - startTime) + 'ms]';
     // no spread operator is available in sandboxed JS.
     switch (arguments.length) {
       case 1:
