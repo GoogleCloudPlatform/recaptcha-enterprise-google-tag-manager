@@ -47,8 +47,8 @@ An alternative library (recaptcha.js) has also been included for those who don't
     * [Open **IAM** in Google Cloud](https://console.cloud.google.com/iam-admin/iam), edit (click the pencil icon next to) the service account you're using for sGTM (if you're using App Engine then this will be something like name@appspot.gserviceaccount.com), select **Add Another Role**, enter "reCAPTCHA Enterprise Agent", and finally **Save**.
         * This is important because it's what allows sGTM access to communicate with the reCAPTCHA Enterprise API.
 
-### Server-side Tag Setup
-#### Import the Server-side Google Tag Manager Tag Template
+### Server-side Variable Setup
+#### Import the Server-side Google Tag Manager Variable Template
 1. Once looking at the server-side container within Tag Manager select **Templates** in the left menu.
 2. On the templates page next to **Variable Templates** select **New**.
 3. From here select the **three vertical dots menu** next to save and select **Import**.
