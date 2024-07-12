@@ -145,14 +145,16 @@ const defer = require('callLater');
 const storage = {
   set: templateDataStorage.setItemCopy,
   get: (key) => {
-    let value = templateDataStorage.getItemCopy(key);
-    if (value === processing) {
-        defer(() => {
-          storage.get(key);
-        });
-    } else {
-      return value;
-    }
+    return promise(resolve => {
+      let value = templateDataStorage.getItemCopy(key);
+      if (value === processing) {
+          defer(() => {
+            storage.get(key).then(resolve);
+          });
+      } else {
+        resolve(value);
+      }
+    });
   },
   remove: templateDataStorage.removeItem
 };
@@ -168,17 +170,7 @@ if (request.isAnalytics()) {
   }
 
   let hash = hashify(eventData);
-  let assessment = storage.get(hash);
-  if (assessment) {
-    log('Returning cached reCAPTCHA assessment...');
-    return assessment;
-  }
-
-  storage.set(hash, processing);
-  log('Processing reCAPTCHA...');
-  addEventCallback(() => storage.remove(hash));
-
-  return getAssessment(eventData)
+  return getAssessment(eventData, hash)
     .then(assessment => {
       if (data.type === 'json') {
         deleteProperty(assessment.event, 'token');
@@ -196,29 +188,45 @@ if (request.isAnalytics()) {
 }
 
 /**
- * Gets the assessment (score, validity, etc) by providing the reCAPTCHA data to the appropriate endpoint.
+ * Gets the assessment (score, validity, etc) by providing the reCAPTCHA data to the
+ * appropriate endpoint or by returning it directly from cache where applicable.
  *
  * @param {Object} eventData Contains all data pulled from the request that came into sGTM.
  * @param {string} eventData.recaptcha The reCAPTCHA data JSON string that contains token and action.
+ * @param {string} hash The hash of the eventData.
  * @returns {Promise<Object>} The reCAPTCHA assessment containing score, token validity, and reasons for score.
  */
-function getAssessment(eventData) {
+function getAssessment(eventData, hash) {
   return promise((resolve, reject) => {
-    const recaptcha = JSON.parse(eventData.recaptcha);
+    storage.get(hash)
+      .then(assessment => {
+        if (assessment) {
+          log('Returning cached reCAPTCHA assessment...');
+          resolve(assessment);
+          return;
+        }
 
-    switch (data.version) {
-      case 'v3':
-        getAssessmentFromSiteVerify(eventData, recaptcha)
-          .then(resolve)
-          .catch(reject);
-        break;
+        storage.set(hash, processing);
+        log('Processing reCAPTCHA...');
+        addEventCallback(() => storage.remove(hash));
 
-      case 'enterprise':
-        getAssessmentFromEnterpriseAPI(eventData, recaptcha)
-          .then(resolve)
-          .catch(reject);
-        break;
-    }
+        const recaptcha = JSON.parse(eventData.recaptcha);
+
+        switch (data.version) {
+          case 'v3':
+            getAssessmentFromSiteVerify(eventData, recaptcha)
+              .then(resolve)
+              .catch(reject);
+            break;
+
+          case 'enterprise':
+            getAssessmentFromEnterpriseAPI(eventData, recaptcha)
+              .then(resolve)
+              .catch(reject);
+            break;
+        }
+      })
+      .catch(reject);
   });
 }
 
@@ -606,43 +614,46 @@ scenarios:
     // run the template code.
     assertThat(runCode(enterpriseMockData))
       .isEqualTo(enterpriseMockData.defaultValueOnMissing);
-- name: Cache Returned When Available
+- name: Wait for Processing - Return Cache
   code: |-
     enterpriseMockData.type = 'json';
     const assessment = enterpriseAssessment;
-    templateDataStorage.removeItem(hash);
+    const defer = require('callLater');
 
-    // run the template code.
-    runCode(enterpriseMockData).then(result => {
-      assertThat(runCode(enterpriseMockData)).isEqualTo(enterpriseAssessment);
+    templateDataStorage.setItemCopy(hash, 'PROCESSING');
+    const execution = runCode(enterpriseMockData);
+    defer(() => {
+      templateDataStorage.setItemCopy(hash, assessment);
+    });
+    execution.then(result => {
+      assertThat(result).isEqualTo(assessment);
     });
 setup: "const json = require('JSON');\nconst promise = require('Promise').create;\n\
-  const defer = require('callLater');\nconst templateDataStorage = require('templateDataStorage');\n\
-  const sha256 = require('sha256Sync');\nconst hashify = (data) => sha256(json.stringify(data));\n\
-  \nconst enterpriseMockData = {\n  version: 'enterprise',\n  cloudProjectId: 'test-project-id',\n\
-  \  type: 'json',\n  loggingEnabled: true,\n  \n};\n\nconst v3MockData = {\n  version:\
-  \ 'v3',\n  secretKey: 'test-secret-key',\n  type: 'json',\n  loggingEnabled: true\n\
-  };\n\nlet eventData;\nmock('getAllEventData', {\n  client_id: 'test-client-id',\n\
-  \  ip_override: 'test-ip-address',\n  user_agent: 'test-user-agent',\n  recaptcha:\
-  \ '{\"token\":\"test-token\",\"action\":\"test-action\",\"siteKey\":\"test-site-key\"\
-  }'\n});\nlet hash = hashify({\n  client_id: 'test-client-id',\n  ip_override: 'test-ip-address',\n\
+  const templateDataStorage = require('templateDataStorage');\nconst sha256 = require('sha256Sync');\n\
+  const hashify = (data) => sha256(json.stringify(data));\n\nconst enterpriseMockData\
+  \ = {\n  version: 'enterprise',\n  cloudProjectId: 'test-project-id',\n  type: 'json',\n\
+  \  loggingEnabled: true,\n  \n};\n\nconst v3MockData = {\n  version: 'v3',\n  secretKey:\
+  \ 'test-secret-key',\n  type: 'json',\n  loggingEnabled: true\n};\n\nlet eventData;\n\
+  mock('getAllEventData', {\n  client_id: 'test-client-id',\n  ip_override: 'test-ip-address',\n\
   \  user_agent: 'test-user-agent',\n  recaptcha: '{\"token\":\"test-token\",\"action\"\
-  :\"test-action\",\"siteKey\":\"test-site-key\"}'\n});\n\nmock('isRequestMpv2', true);\n\
-  \nconst enterpriseAssessment = {\n  event: {\n    expectedAction: 'test-action',\n\
-  \  },\n  riskAnalysis: {\n    score: 0.7,\n    reasons: ['TEST_REASON'],\n    extendedVerdictReasons:\
-  \ ['TEST_EXTENDED_VERDICT_REASON']\n  },\n  tokenProperties: {\n    valid: true,\n\
-  \    action: 'test-action',\n    invalidReason: 'INVALID_REASON_UNSPECIFIED',\n\
-  \    createTime: '2023-04-28T20:41:30.166Z'\n  }\n};\n\nconst v3Assessment = {\n\
-  \  success: true,      \n  score: 0.8,\n  action: 'test-action',\n  challenge_ts:\
-  \ '2023-04-28T20:41:30.166Z',\n  'error-codes': []\n};\n\nlet httpRequest = {};\n\
-  mock('sendHttpRequest', function(url, options, body) {\n  httpRequest.url = url;\n\
-  \  httpRequest.options = options;\n  httpRequest.body = body;\n  \n  return promise(resolve\
-  \ => resolve({\n    statusCode: 200,\n    body: json.stringify(assessment)\n  }));\n\
-  });"
+  :\"test-action\",\"siteKey\":\"test-site-key\"}'\n});\nlet hash = hashify({\n  client_id:\
+  \ 'test-client-id',\n  ip_override: 'test-ip-address',\n  user_agent: 'test-user-agent',\n\
+  \  recaptcha: '{\"token\":\"test-token\",\"action\":\"test-action\",\"siteKey\"\
+  :\"test-site-key\"}'\n});\n\nmock('isRequestMpv2', true);\n\nconst enterpriseAssessment\
+  \ = {\n  event: {\n    expectedAction: 'test-action',\n  },\n  riskAnalysis: {\n\
+  \    score: 0.7,\n    reasons: ['TEST_REASON'],\n    extendedVerdictReasons: ['TEST_EXTENDED_VERDICT_REASON']\n\
+  \  },\n  tokenProperties: {\n    valid: true,\n    action: 'test-action',\n    invalidReason:\
+  \ 'INVALID_REASON_UNSPECIFIED',\n    createTime: '2023-04-28T20:41:30.166Z'\n  }\n\
+  };\n\nconst v3Assessment = {\n  success: true,      \n  score: 0.8,\n  action: 'test-action',\n\
+  \  challenge_ts: '2023-04-28T20:41:30.166Z',\n  'error-codes': []\n};\n\nlet httpRequest\
+  \ = {};\nmock('sendHttpRequest', function(url, options, body) {\n  httpRequest.url\
+  \ = url;\n  httpRequest.options = options;\n  httpRequest.body = body;\n  \n  return\
+  \ promise(resolve => resolve({\n    statusCode: 200,\n    body: json.stringify(assessment)\n\
+  \  }));\n});"
 
 
 ___NOTES___
 
-Created on 3/25/2024, 12:29:47 PM
+Created on 7/10/2024, 2:03:29 PM
 
 

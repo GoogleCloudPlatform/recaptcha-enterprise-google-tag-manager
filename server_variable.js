@@ -44,14 +44,16 @@ const defer = require('callLater');
 const storage = {
   set: templateDataStorage.setItemCopy,
   get: (key) => {
-    let value = templateDataStorage.getItemCopy(key);
-    if (value === processing) {
-        defer(() => {
-          storage.get(key);
-        });
-    } else {
-      return value;
-    }
+    return promise(resolve => {
+      let value = templateDataStorage.getItemCopy(key);
+      if (value === processing) {
+          defer(() => {
+            storage.get(key).then(resolve);
+          });
+      } else {
+        resolve(value);
+      }
+    });
   },
   remove: templateDataStorage.removeItem
 };
@@ -67,17 +69,7 @@ if (request.isAnalytics()) {
   }
 
   let hash = hashify(eventData);
-  let assessment = storage.get(hash);
-  if (assessment) {
-    log('Returning cached reCAPTCHA assessment...');
-    return assessment;
-  }
-
-  storage.set(hash, processing);
-  log('Processing reCAPTCHA...');
-  addEventCallback(() => storage.remove(hash));
-
-  return getAssessment(eventData)
+  return getAssessment(eventData, hash)
     .then(assessment => {
       if (data.type === 'json') {
         deleteProperty(assessment.event, 'token');
@@ -95,29 +87,45 @@ if (request.isAnalytics()) {
 }
 
 /**
- * Gets the assessment (score, validity, etc) by providing the reCAPTCHA data to the appropriate endpoint.
+ * Gets the assessment (score, validity, etc) by providing the reCAPTCHA data to the
+ * appropriate endpoint or by returning it directly from cache where applicable.
  *
  * @param {Object} eventData Contains all data pulled from the request that came into sGTM.
  * @param {string} eventData.recaptcha The reCAPTCHA data JSON string that contains token and action.
+ * @param {string} hash The hash of the eventData.
  * @returns {Promise<Object>} The reCAPTCHA assessment containing score, token validity, and reasons for score.
  */
-function getAssessment(eventData) {
+function getAssessment(eventData, hash) {
   return promise((resolve, reject) => {
-    const recaptcha = JSON.parse(eventData.recaptcha);
+    storage.get(hash)
+      .then(assessment => {
+        if (assessment) {
+          log('Returning cached reCAPTCHA assessment...');
+          resolve(assessment);
+          return;
+        }
 
-    switch (data.version) {
-      case 'v3':
-        getAssessmentFromSiteVerify(eventData, recaptcha)
-          .then(resolve)
-          .catch(reject);
-        break;
+        storage.set(hash, processing);
+        log('Processing reCAPTCHA...');
+        addEventCallback(() => storage.remove(hash));
 
-      case 'enterprise':
-        getAssessmentFromEnterpriseAPI(eventData, recaptcha)
-          .then(resolve)
-          .catch(reject);
-        break;
-    }
+        const recaptcha = JSON.parse(eventData.recaptcha);
+
+        switch (data.version) {
+          case 'v3':
+            getAssessmentFromSiteVerify(eventData, recaptcha)
+              .then(resolve)
+              .catch(reject);
+            break;
+
+          case 'enterprise':
+            getAssessmentFromEnterpriseAPI(eventData, recaptcha)
+              .then(resolve)
+              .catch(reject);
+            break;
+        }
+      })
+      .catch(reject);
   });
 }
 
