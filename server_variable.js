@@ -204,11 +204,7 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
         expectedAction: recaptcha.action,
         userIpAddress: eventData.ip_override,
         userAgent: eventData.user_agent
-      },
-      assessmentEnvironment: {
-        client: 'github.com/GoogleCloudPlatform/recaptcha-enterprise-google-tag-manager',
-        version: '1.0.0'
-      } 
+      }
     });
 
     log(url, body);
