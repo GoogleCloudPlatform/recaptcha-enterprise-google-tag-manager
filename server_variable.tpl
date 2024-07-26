@@ -307,8 +307,8 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
         userAgent: eventData.user_agent
       },
       assessment_environment: {
-        client: 'server-side-google-tag-manager',
-        version: 'github-gcp-recaptcha-enterprise-google-tag-manager-1.0.0'
+        client: 'github.com/GoogleCloudPlatform/recaptcha-enterprise-google-tag-manager',
+        version: '1.0.0'
       } 
     });
 
