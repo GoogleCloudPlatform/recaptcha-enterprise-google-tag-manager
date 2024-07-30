@@ -22,6 +22,10 @@ const startTime = timestamp();
 const siteVerifyUrl = 'https://www.google.com/recaptcha/api/siteverify';
 const enterpriseApiUrl = 'https://recaptchaenterprise.googleapis.com/v1';
 const processing = 'PROCESSING';
+// below two fields assessmentEnvironmentClient and assessmentEnvironmentVersion are needed   
+// during recaptcha createAssessment call to specify the assessment environment.
+const assessmentEnvironmentClient = 'github.com/GoogleCloudPlatform/recaptcha-enterprise-google-tag-manager';
+const assessmentEnvironmentVersion = '1.0.0';
 
 // request and response specific methods.
 const request = {
@@ -206,8 +210,8 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
         userAgent: eventData.user_agent
       },
       assessmentEnvironment: {
-        client: 'github.com/GoogleCloudPlatform/recaptcha-enterprise-google-tag-manager',
-        version: '1.0.0'
+        client: assessmentEnvironmentClient,
+        version: assessmentEnvironmentVersion
       } 
     });
 
