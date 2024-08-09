@@ -310,7 +310,7 @@ function getAssessmentFromEnterpriseAPI(eventData, recaptcha) {
         userIpAddress: eventData.ip_override,
         userAgent: eventData.user_agent
       },
-      assessment_environment: {
+      assessmentEnvironment: {
         client: assessmentEnvironmentClient,
         version: assessmentEnvironmentVersion
       } 
